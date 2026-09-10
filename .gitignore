@@ -1,7 +1,11 @@
 node_modules/
 dist/
+dist-pkg/
+dist-sea/
 *.log
 .DS_Store
 .mdok.json
 github_key*
 *.pem
+*.swp
+.git_pass

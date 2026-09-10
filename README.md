@@ -1,9 +1,22 @@
 # mdok — Markdown OK
 
+[English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
+
 Terminal TUI editor for `.md` files: sidebar explorer + source + live preview,
 themes, tabs, find/replace, lint, shell runner, and BYOK LLM (ask + rewrite).
 
-## Install (dev)
+## Install
+
+```sh
+npm install -g mdok
+```
+
+No Node.js? Download a standalone binary (macOS arm64/x64, Linux x64,
+Windows x64) from
+[GitHub Releases](https://github.com/daystar7777/mdok-cli/releases) —
+`mdok-linux-x64`, `mdok-macos-arm64`, … — and put it on your `PATH`.
+
+From source (needs Node.js 22+):
 
 ```sh
 npm install

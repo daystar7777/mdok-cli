@@ -1,0 +1,62 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          # macOS arm64 runner cross-builds both mac binaries (bun cross-compile)
+          - os: macos-14
+            targets: "bun-darwin-arm64:mdok-macos-arm64 bun-darwin-x64:mdok-macos-x64"
+          - os: ubuntu-22.04
+            targets: "bun-linux-x64:mdok-linux-x64"
+          - os: windows-2022
+            targets: "bun-windows-x64:mdok-windows-x64.exe"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - run: bun install --frozen-lockfile
+      - name: Build binaries
+        shell: bash
+        run: |
+          for pair in ${{ matrix.targets }}; do
+            target="${pair%%:*}"
+            name="${pair##*:}"
+            bun build --compile --target "$target" src/index.ts --outfile "$name"
+          done
+      - name: Smoke test
+        shell: bash
+        run: |
+          for pair in ${{ matrix.targets }}; do
+            name="${pair##*:}"
+            ./"$name" --help >/dev/null
+            ./"$name" lint README.md
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bins-${{ matrix.os }}
+          path: mdok-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum mdok-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/mdok-*
