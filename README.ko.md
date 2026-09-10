@@ -11,6 +11,10 @@
 npm install -g @daystar7777/mdok
 ```
 
+> `mdok: command not found`? 셸이 npm 전역 bin을 못 보는 거예요.
+> 설치기가 맞는 `export PATH=…` 한 줄을 알려줘요.
+> 직접 확인: `npm prefix -g` 후 `<prefix>/bin`이 `PATH`에 있는지.
+
 소스에서 (Node.js 22+ 필요):
 
 ```sh

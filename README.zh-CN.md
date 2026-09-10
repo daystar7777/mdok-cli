@@ -11,6 +11,10 @@
 npm install -g @daystar7777/mdok
 ```
 
+> `mdok: command not found`? shell 看不到 npm 全局 bin 目录。
+> 安装程序会给出正确的 `export PATH=…`。
+> 手动检查: `npm prefix -g`,确认 `<prefix>/bin` 在 `PATH` 中。
+
 从源码 (需要 Node.js 22+):
 
 ```sh

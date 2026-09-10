@@ -11,6 +11,10 @@ themes, tabs, find/replace, lint, shell runner, and BYOK LLM (ask + rewrite).
 npm install -g @daystar7777/mdok
 ```
 
+> `mdok: command not found`? Your shell doesn't see npm's global bin dir.
+> The installer prints the exact fix (an `export PATH=…` line for your shell).
+> Manual check: `npm prefix -g`, then make sure `<prefix>/bin` is on `PATH`.
+
 No Node.js? Download a standalone binary (macOS arm64/x64, Linux x64,
 Windows x64) from
 [GitHub Releases](https://github.com/daystar7777/mdok-cli/releases) —

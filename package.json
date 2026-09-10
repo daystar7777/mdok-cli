@@ -1,6 +1,6 @@
 {
   "name": "@daystar7777/mdok",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Markdown OK — pretty CLI viewer + LLM analysis for .md files (BYOK)",
   "type": "module",
   "bin": {
@@ -10,7 +10,8 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "pkg": "node scripts/pkg-build.mjs"
+    "pkg": "node scripts/pkg-build.mjs",
+    "postinstall": "node scripts/postinstall.mjs"
   },
   "keywords": [
     "markdown",
@@ -26,6 +27,7 @@
   },
   "files": [
     "dist",
+    "scripts/postinstall.mjs",
     "README.md",
     "README.ko.md",
     "README.ja.md",

@@ -12,6 +12,10 @@
 npm install -g @daystar7777/mdok
 ```
 
+> `mdok: command not found`? シェルが npm のグローバル bin を見ていません。
+> インストーラが正しい `export PATH=…` を表示します。
+> 手動確認: `npm prefix -g` の `<prefix>/bin` が `PATH` にあるか。
+
 ソースから (Node.js 22+ が必要):
 
 ```sh
