@@ -1,6 +1,6 @@
 # TUI QR export (MDOK1)
 
-Open **File → Show file as QR** (item 7), or press **Ctrl+O, Shift+Q**.
+Click the header **[QR]** button, open **File → Show file as QR** (item 7), or press **Ctrl+O, r**.
 The current buffer, including unsaved changes, is frozen for this transfer.
 No file is saved, committed, uploaded, or encrypted by QR export.
 

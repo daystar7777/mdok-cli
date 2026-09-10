@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-pkg/
 dist-sea/
+release-npm/
 *.log
 .DS_Store
 .mdok.json

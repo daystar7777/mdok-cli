@@ -32,6 +32,11 @@ npm link  # or: node dist/index.js
 
 ## Usage
 
+QR export: click `[QR]`, or press `Ctrl+O`, then `r` (or File → item 7) to display the
+current buffer as QR frames. Use arrows to step, Space to auto-cycle, Esc to
+close. The payload is compressed, **not encrypted**, and needs an MDOK1
+receiver (receiver UI is not yet included). [Format and limits](docs/qr-transfer.md).
+
 ```sh
 mdok README.md      # open (restores other session tabs too)
 mdok                # resume last session
@@ -78,7 +83,7 @@ Config lives at `~/.mdok.json` (`MDOK_API_KEY`, `MDOK_BASE_URL`, `MDOK_MODEL`,
 | `Ctrl+O`, `b` | toggle sidebar (Recent · Outline · Cwd files) |
 | `Ctrl+O`, `f` | file menu (Save · New · Open… · Run… · Export HTML · Close tab) |
 | `Ctrl+O`, `a` | ask LLM about open files, streams into preview (`Esc` cancels) |
-| `Ctrl+O`, `r` | AI rewrite selection, diff accept/reject |
+| `Ctrl+O`, `R` | AI rewrite selection, diff accept/reject |
 | `Ctrl+O`, `/` | find; `Tab` = replace field, `Enter` = search/replace, `n`/`N` next/prev |
 | `Ctrl+O`, `!` | run shell command, output stays in-editor |
 | `Ctrl+O`, `L` / `F` | lint problems / format buffer |

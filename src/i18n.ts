@@ -1,7 +1,7 @@
 export type Lang = "ko" | "en";
 
 const en = {
-  "menu.qr": "Show file as QR (^O Q)",
+  "menu.qr": "Show file as QR (^O r)",
   "qr.title": "QR",
   "qr.note": "Buffer snapshot · compressed, NOT encrypted",
   "qr.size": "QR needs at least 37 columns × 23 rows. Resize and retry.",
@@ -33,7 +33,7 @@ const en = {
   "hint.asking": " · asking…",
   "hint.output": "output: ↑↓/wheel scroll · Enter/Esc close",
   "hint.leaderUnknown":
-    "^O Tab switch · v view · f file · a ask · / find · ! run · n/N next · t theme · l lines · L lint · F format · V vim · r rewrite · g gitsync · w closetab · m menu · c config · ? help",
+    "^O Tab switch · v view · f file · a ask · / find · ! run · n/N next · t theme · l lines · L lint · F format · V vim · r QR · R rewrite · g gitsync · w closetab · m menu · c config · ? help",
   // file menu
   "menu.fileTitle": "File",
   "menu.save": "Save",
@@ -100,9 +100,9 @@ const en = {
   "help.close": "any key/click closes",
   "help.h1": " ^O Tab / e / p — switch panes · ^O v — split/src/view · ^O b — sidebar",
   "help.h2": " ^O f — file · ^O a — ask LLM · ^O / — find · ^O n/N — next/prev",
-  "help.h3": " ^O ! — run command · ^O 1-9/w — tabs · ^O g — git sync",
+  "help.h3": " ^O ! — run command · ^O 1-9/w — tabs · ^O g — git sync · ^O r — QR",
   "help.h4": " ^O c — settings · ^O t — theme · ^O s — save · ^O q — quit · Esc — clear find",
-  "help.h5": " ^O L — lint · ^O F — format · ^O | — table · ^O r — AI rewrite",
+  "help.h5": " ^O L — lint · ^O F — format · ^O | — table · ^O R — AI rewrite",
   "help.h6": " ^O V — vim mode · ^O l — line numbers · Shift+arrows — select",
   "help.h7": " Tab — 2 spaces · F10/^O m — menu bar · mouse — click/drag/wheel",
   "help.h8": " pairs: [+] adds pair · X (source corner) closes · click focuses",
@@ -188,7 +188,7 @@ const en = {
 export type MsgKey = keyof typeof en;
 
 const ko: Record<MsgKey, string> = {
-  "menu.qr": "파일 QR 표시 (^O Q)",
+  "menu.qr": "파일 QR 표시 (^O r)",
   "qr.title": "QR",
   "qr.note": "현재 버퍼 사본 · 압축됨, 암호화 아님",
   "qr.size": "QR은 최소 37열 × 23행이 필요합니다. 창을 키워 다시 시도하세요.",
@@ -218,7 +218,7 @@ const ko: Record<MsgKey, string> = {
   "hint.asking": " · 질문 중…",
   "hint.output": "출력: ↑↓/휠 스크롤 · Enter/Esc 닫기",
   "hint.leaderUnknown":
-    "^O Tab 전환 · v 화면 · f 파일 · a 질문 · / 찾기 · ! 실행 · n/N 다음 · t 테마 · l 줄번호 · L 검사 · F 정리 · V vim · r 고쳐쓰기 · g git동기화 · w 탭닫기 · m 메뉴 · c 설정 · ? 도움말",
+    "^O Tab 전환 · v 화면 · f 파일 · a 질문 · / 찾기 · ! 실행 · n/N 다음 · t 테마 · l 줄번호 · L 검사 · F 정리 · V vim · r QR · R 고쳐쓰기 · g git동기화 · w 탭닫기 · m 메뉴 · c 설정 · ? 도움말",
   "menu.fileTitle": "파일",
   "menu.save": "저장",
   "menu.new": "새 파일",
@@ -275,9 +275,9 @@ const ko: Record<MsgKey, string> = {
   "help.close": "아무 키나 클릭하면 닫힘",
   "help.h1": " ^O Tab / e / p — 판 전환 · ^O v — 분할/소스/보기 · ^O b — 사이드바",
   "help.h2": " ^O f — 파일 · ^O a — 질문 · ^O / — 찾기 · ^O n/N — 다음/이전",
-  "help.h3": " ^O ! — 명령 실행 · ^O 1-9/w — 탭 · ^O g — git 동기화",
+  "help.h3": " ^O ! — 명령 실행 · ^O 1-9/w — 탭 · ^O g — git 동기화 · ^O r — QR",
   "help.h4": " ^O c — 설정 · ^O t — 테마 · ^O s — 저장 · ^O q — 종료 · Esc — 찾기 지우기",
-  "help.h5": " ^O L — 검사 · ^O F — 정리 · ^O | — 표 · ^O r — AI 고쳐쓰기",
+  "help.h5": " ^O L — 검사 · ^O F — 정리 · ^O | — 표 · ^O R — AI 고쳐쓰기",
   "help.h6": " ^O V — vim 모드 · ^O l — 줄번호 · Shift+방향키 — 선택",
   "help.h7": " Tab — 스페이스 2개 · F10/^O m — 메뉴 · 마우스 — 클릭/드래그/휠",
   "help.h8": " 페어: [+] 추가 · X (소스 모서리) 닫기 · 클릭 포커스",

@@ -38,7 +38,7 @@ const program = new Command();
 program
   .name("mdok")
   .description("Markdown OK — pretty CLI viewer + LLM analysis (BYOK)")
-  .version("0.1.0");
+  .version("0.1.2");
 
 program
   .command("view")

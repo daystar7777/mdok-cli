@@ -1160,6 +1160,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     else if (id === "ask") void a.openOverlayKind("ask");
     else if (id === "find") void a.openOverlayKind("find");
     else if (id === "file") void a.openOverlayKind("file");
+    else if (id === "qr") void a.openOverlayKind("qr");
     else if (id === "shell") toggleShell();
     else if (id === "set") void a.openOverlayKind("settings");
     else if (id === "help") {
@@ -1846,7 +1847,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         setQuitArmed(false);
       } else if (input === "f") {
         void openOverlayKind("file");
-      } else if (input === "Q") {
+      } else if (input === "r") {
         void openOverlayKind("qr");
       } else if (input === "a") {
         void openOverlayKind("ask");
@@ -1878,7 +1879,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         applyTableFormat();
       } else if (input === "V") {
         toggleVim();
-      } else if (input === "r") {
+      } else if (input === "R") {
         void startRewrite();
       } else if (input === "m") {
         enterMenu();
@@ -2163,11 +2164,11 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   // ---- Header button bar (spans must match rendered widths exactly) ----
   const viewBtnLabel = `[${viewMode === "split" ? t("btn.split") : viewMode === "source" ? t("btn.src") : t("btn.view")}]`;
   const menuBtn = "[>]"; // toggles the sidebar
-  const fullRight: Array<[string, string]> = [["ask", t("btn.ask")], ["find", t("btn.find")], ["file", t("btn.file")], ["shell", t("btn.shell")], ["set", t("btn.set")], ["help", t("btn.help")], ["quit", t("btn.quit")]];
+  const fullRight: Array<[string, string]> = [["ask", t("btn.ask")], ["find", t("btn.find")], ["file", t("btn.file")], ["qr", "QR"], ["shell", t("btn.shell")], ["set", t("btn.set")], ["help", t("btn.help")], ["quit", t("btn.quit")]];
   const leftFixed = menuBtn.length + 1 + 5 + viewBtnLabel.length + 1; // "[Menu] " + "mdok " + view + space
   const fullRightWidth = fullRight.reduce((a, [, l]) => a + l.length + 3, 0);
   const compact = cols < leftFixed + fullRightWidth + 14;
-  const rightDefs = compact ? [["quit", "X"] as [string, string]] : fullRight;
+  const rightDefs: Array<[string, string]> = compact ? [["qr", "QR"], ["quit", "X"]] : fullRight;
   const rightWidth = rightDefs.reduce((a, [, l]) => a + l.length + 3, 0);
   const fileMax = Math.max(6, cols - leftFixed - rightWidth - 2);
   const shownFile = curFile.length > fileMax ? "…" + curFile.slice(-fileMax + 1) : curFile;

@@ -1,6 +1,6 @@
 {
   "name": "@daystar7777/mdok",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Markdown OK — pretty CLI viewer + LLM analysis for .md files (BYOK)",
   "type": "module",
   "bin": {
@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
+    "test": "node --import tsx --test src/qr.test.ts",
+    "prepack": "npm run build && npm test",
     "start": "node dist/index.js",
     "pkg": "node scripts/pkg-build.mjs",
     "postinstall": "node scripts/postinstall.mjs"
@@ -28,6 +30,7 @@
   "files": [
     "dist",
     "scripts/postinstall.mjs",
+    "docs/qr-transfer.md",
     "README.md",
     "README.ko.md",
     "README.ja.md",

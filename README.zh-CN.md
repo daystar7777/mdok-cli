@@ -72,7 +72,7 @@ mdok config --key sk-... --theme ocean --git on --lang ko
 | `Ctrl+O`, `b` | 开关侧边栏 (最近 · 大纲 · 工作目录) |
 | `Ctrl+O`, `f` | 文件菜单 (保存 · 新建 · 打开… · 运行… · 导出 HTML · 关闭标签页) |
 | `Ctrl+O`, `a` | 就打开的文件问 LLM,流式输出到预览 (`Esc` 取消) |
-| `Ctrl+O`, `r` | AI 改写选区,看 diff 接受/丢弃 |
+| `Ctrl+O`, `R` | AI 改写选区,看 diff 接受/丢弃 |
 | `Ctrl+O`, `/` | 查找;`Tab` = 替换栏、`Enter` = 查找/替换、`n`/`N` 下一个/上一个 |
 | `Ctrl+O`, `!` | 运行 shell 命令,结果显示在编辑器内 |
 | `Ctrl+O`, `L` / `F` | 问题列表 / 整理 buffer |

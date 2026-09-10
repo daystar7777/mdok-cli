@@ -25,6 +25,11 @@ npm link  # 또는: node dist/index.js
 
 ## 사용법
 
+QR 내보내기: 상단 `[QR]` 클릭 또는 `Ctrl+O` 다음 `r` (파일 메뉴 7번)로 현재 버퍼를
+QR로 표시합니다. 방향키로 이동, Space로 자동 순환, Esc로 닫습니다.
+압축만 적용되며 **암호화되지 않습니다**. MDOK1 수신기가 필요하며 수신 UI는
+아직 포함되지 않았습니다. [전송 형식과 한도](docs/qr-transfer.md).
+
 ```sh
 mdok README.md      # 열기 (세션의 다른 탭도 같이 복원)
 mdok                # 마지막 세션 이어하기
@@ -71,7 +76,7 @@ mdok config --key sk-... --theme ocean --git on --lang ko
 | `Ctrl+O`, `b` | 사이드바 토글 (최근 · 목차 · 작업폴더 파일) |
 | `Ctrl+O`, `f` | 파일 메뉴 (저장 · 새 파일 · 열기… · 실행… · HTML 내보내기 · 탭 닫기) |
 | `Ctrl+O`, `a` | 열린 파일에 LLM 질문, 프리뷰에 스트리밍 (`Esc` 취소) |
-| `Ctrl+O`, `r` | 선택영역 AI 고쳐쓰기, diff 보고 적용/버리기 |
+| `Ctrl+O`, `R` | 선택영역 AI 고쳐쓰기, diff 보고 적용/버리기 |
 | `Ctrl+O`, `/` | 찾기; `Tab` = 바꾸기 칸, `Enter` = 찾기/바꾸기, `n`/`N` 다음/이전 |
 | `Ctrl+O`, `!` | 셸 명령 실행, 결과는 에디터 안에 |
 | `Ctrl+O`, `L` / `F` | 문제 목록 / 버퍼 정리 |
