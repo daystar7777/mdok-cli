@@ -3,6 +3,7 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch: # manual re-run (e.g. publish current version to GPR)
 
 permissions:
   contents: write
@@ -60,3 +61,22 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/mdok-*
+
+  # Mirror the npm package to GitHub Packages (npm.pkg.github.com).
+  # Needs no secrets: GITHUB_TOKEN is provided automatically.
+  publish-gpr:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: "@daystar7777"
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
