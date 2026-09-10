@@ -55,6 +55,8 @@ jobs:
           path: mdok-*
 
   release:
+    # Tags only: manual runs just build + upload artifacts (no tag to attach to).
+    if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-22.04
     steps:
@@ -71,6 +73,8 @@ jobs:
   # Mirror the npm package to GitHub Packages (npm.pkg.github.com).
   # Needs no secrets: GITHUB_TOKEN is provided automatically.
   publish-gpr:
+    # Tags only: republishing the same version would fail.
+    if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-22.04
     permissions:
