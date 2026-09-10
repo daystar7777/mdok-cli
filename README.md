@@ -8,7 +8,7 @@ themes, tabs, find/replace, lint, shell runner, and BYOK LLM (ask + rewrite).
 ## Install
 
 ```sh
-npm install -g mdok
+npm install -g @daystar7777/mdok
 ```
 
 No Node.js? Download a standalone binary (macOS arm64/x64, Linux x64,

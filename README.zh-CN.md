@@ -5,7 +5,13 @@
 `.md` 文件的终端 TUI 编辑器:侧边栏浏览器 + 源码 + 实时预览、主题、
 标签页、查找/替换、lint、shell 运行,以及 BYOK LLM (提问 + 改写)。
 
-## 安装 (开发用)
+## 安装
+
+```sh
+npm install -g @daystar7777/mdok
+```
+
+从源码 (需要 Node.js 22+):
 
 ```sh
 npm install

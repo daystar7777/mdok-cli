@@ -6,7 +6,13 @@
 ライブプレビュー、テーマ、タブ、検索/置換、lint、シェル実行、そして BYOK LLM
 (質問 + リライト)。
 
-## インストール (開発用)
+## インストール
+
+```sh
+npm install -g @daystar7777/mdok
+```
+
+ソースから (Node.js 22+ が必要):
 
 ```sh
 npm install
