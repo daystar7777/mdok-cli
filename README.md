@@ -1,5 +1,7 @@
 # mdok — Markdown OK
 
+0.1.7 adds local math diagnostics (KaTeX/MathJax), safe delimiter conversion and Markdown-aware/Git comparison. **Ctrl+O M**: math tools; **Ctrl+O D**: compare. [Usage and limits](docs/math-tools.md).
+
 Since 0.1.6, TUI starts in **View**. Press **Enter** in the document to enter split editing (source + preview). Enter still inserts a newline while editing; menus and input fields keep their normal Enter behavior.
 
 0.1.6 adds optional VS Code/Pandoc integration and explicit [Markdown compatibility](docs/markdown-compatibility.md). TUI does not typeset LaTeX; Pandoc conversion requires separately installed tools. Real conversion fidelity remains unverified.

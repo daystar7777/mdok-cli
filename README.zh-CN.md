@@ -1,5 +1,7 @@
 # mdok — Markdown OK
 
+0.1.7：新增 KaTeX/MathJax 公式诊断、安全的定界符转换及 Markdown/Git 比较。**Ctrl+O M**：公式工具；**Ctrl+O D**：比较。[用法和限制](docs/math-tools.md)（韩语）。
+
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 `.md` 文件的终端 TUI 编辑器:侧边栏浏览器 + 源码 + 实时预览、主题、

@@ -24,17 +24,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.2"
-      - run: bun install --frozen-lockfile
+      - run: npm ci
+      - run: npm run build
       - name: Build binaries
         shell: bash
         run: |
           for pair in ${{ matrix.targets }}; do
             target="${pair%%:*}"
             name="${pair##*:}"
-            bun build --compile --target "$target" src/index.ts --outfile "$name"
+            bun build --compile --target "$target" dist/index.js dist/analysis-worker.js dist/math-engine-worker.js --outfile "$name"
           done
       - name: Smoke test (native arch only; cross-built binaries can't execute here)
         shell: bash
@@ -48,6 +52,7 @@ jobs:
             if [ "$want" != "$have" ]; then echo "skip smoke $name (cross-built)"; continue; fi
             ./"$name" --help >/dev/null
             ./"$name" lint README.md
+            node scripts/smoke-release.mjs "./$name"
           done
       - uses: actions/upload-artifact@v5
         with:
@@ -60,6 +65,7 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v5
         with:
           path: dist
@@ -68,7 +74,10 @@ jobs:
         run: cd dist && sha256sum mdok-* > SHA256SUMS.txt && cat SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/mdok-*
+          body_path: docs/releases/${{ github.ref_name }}.md
+          files: |
+            dist/mdok-*
+            dist/SHA256SUMS.txt
 
   # Mirror the npm package to GitHub Packages (npm.pkg.github.com).
   # Needs no secrets: GITHUB_TOKEN is provided automatically.

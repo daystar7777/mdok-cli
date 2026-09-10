@@ -1,5 +1,7 @@
 # mdok — Markdown OK
 
+0.1.7: KaTeX/MathJax による数式診断、安全な区切り文字変換、Markdown/Git 比較を追加。**Ctrl+O M**: 数式ツール、**Ctrl+O D**: 比較。[使い方と制限](docs/math-tools.md)（韓国語）。
+
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 `.md` ファイル用のターミナル TUI エディタ:サイドバーエクスプローラ + ソース +

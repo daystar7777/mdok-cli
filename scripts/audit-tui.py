@@ -36,6 +36,9 @@ def run(name, actions, verify, mode='plain', width=120, lang=None, override=None
         if start_edit:
             os.write(master,b'\r')
             initial=drain(0.3)
+            for _ in range(10):
+                if '[Split]' in initial or '[분할]' in initial: break
+                initial+=drain(0.25)
             check('[Split]' in initial or '[분할]' in initial,'Enter did not enter split editing')
         screens.append(initial)
         for action in actions:
@@ -46,11 +49,17 @@ def run(name, actions, verify, mode='plain', width=120, lang=None, override=None
                 fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',rows,cols,0,0))
                 process.send_signal(__import__('signal').SIGWINCH)
             else: os.write(master,action.encode())
-            screens.append(drain(action['wait'] if isinstance(action,dict) else 0.22 if action!='\x13' else 0.4))
+            # Worker-backed math/comparison opens asynchronously. Keep one screen
+            # per action so assertions retain their exact event indices.
+            screens.append(drain(action['wait'] if isinstance(action,dict) else 0.8 if name.startswith('math ') else 0.22 if action!='\x13' else 0.4))
         # Exit may need confirmation for unsaved fixtures; preserve session evidence.
         if process.poll() is None:
             drain(0.2) # Let the overlay's 300ms opening guard expire before Esc.
             os.write(master,b'\x1b');drain(0.4)
+            # Search is nested inside comparison: first Esc closes the query,
+            # second closes the comparison before requesting application exit.
+            if process.poll() is None:
+                os.write(master,b'\x1b');drain(0.4)
         for _ in range(4):
             if process.poll() is not None: break
             try: os.write(master,b'\x11')
@@ -125,6 +134,19 @@ run('viewer Enter enters split without newline',['\r','X','\x13'],lambda d,s:che
 run('viewer second Enter inserts newline',['\r','\r','\x13'],lambda d,s:check(d['a'].startswith('\nALPHA'),'editing Enter did not insert newline'),start_edit=False)
 run('viewer Korean Enter hint',['\r'],lambda d,s:check('Enter 편집' in s[0] and '[분할]' in s[1] and d['a'].startswith('ALPHA'),'Korean viewer transition failed'),lang='ko',start_edit=False)
 run('viewer file menu Enter does not enter editor',['\x0ff','\r'],lambda d,s:check(not any('[Split]' in screen for screen in s) and d['a'].startswith('ALPHA'),'menu Enter leaked into edit mode'),start_edit=False)
+run('math tools menu and body unchanged',['\x0fM'],lambda d,s:check('Math tools' in s[-1] and 'Engine' in s[-1] and buffer(d)==d['a'],'math menu changed buffer'),mode='math')
+run('math KaTeX actual engine diagnostics',['\x0fM','1',{'key':'','wait':0.7},'3'],lambda d,s:check('could not parse' in s[-1] and 'Unclosed' in s[-1],'engine/structure diagnostics missing'),mode='math-bad')
+run('math MathJax actual engine diagnostics',['\x0fM','1','1',{'key':'','wait':0.7},'3'],lambda d,s:check('could not parse' in s[-1],'MathJax warning missing'),mode='math-bad')
+run('math conversion applies only on y',['\x0fM','5','y','\x13'],lambda d,s:check('\\[x^2\\]' in d['a'] and '\\(y\\)' in d['a'] and '`$code$`' in d['a'],'conversion failed'),mode='math')
+run('math conversion Undo restores exact source',['\x0fM','5','y','\x1a','\x13'],lambda d,s:check(d['a']=='# Math\n\n$$x^2$$\n\nInline $y$.\n\n`$code$`','conversion Undo failed'),mode='math')
+run('math conversion Enter does not apply',['\x0fM','5','\r','\x1b'],lambda d,s:check(buffer(d)==d['a'] and '$$x^2$$' in buffer(d),'Enter unexpectedly applied conversion'),mode='math')
+run('math Korean tool translations',['\x0fM'],lambda d,s:check('수식 도구' in s[-1] and '엔진' in s[-1],'math labels not translated'),lang='ko',mode='math')
+run('math compare buffer disk read only',['X','\x0fD','\r','\r','\x1b','\x13'],lambda d,s:check(d['a'].startswith('XALPHA') and not d['a'].startswith('\n'),'comparison Enter leaked into editor'))
+run('math compare raw and wide toggle',['X','\x0fD','\r','r','r','\t'],lambda d,s:check('Raw' in s[4] and '│' in s[-1] and buffer(d).startswith('XALPHA'),'comparison toggle failed'))
+run('math compare long diff beyond 60 lines',['\x0fD']+['\x7f']*5+['b.md','\r','r']+['\x1b[6~']*12,lambda d,s:check(any('line 99' in screen for screen in s[8:]),'long diff is truncated'),mode='compare-long')
+run('math compare query jump and Escape stays in comparison',['X','\x0fD','\r','/',':1','\r','/','\x1b'],lambda d,s:check('Markdown comparison' in s[-1] and buffer(d).startswith('XALPHA'),'search/jump leaked'))
+run('math narrow compare query remains visible',['X','\x0fD','\r','/'],lambda d,s:check('Markdown comparison' in s[-1] and '/' in s[-1] and buffer(d).startswith('XALPHA'),'narrow comparison overflow'),width=40)
+run('math narrow diagnostics returns to document',['\x0fM','3','\x1b'],lambda d,s:check('Unclosed' in s[-2] and '[Split]' in s[-1],'narrow diagnostics overflow'),width=40,mode='math-bad')
 for mode,cluster in [('zwj','👩‍💻'),('nfd','한')]:
     run('grapheme '+mode+' backspace',['\x1b[C','\x7f','\x13'],lambda d,s:check(d['a']=='ABC','cluster backspace corrupted text: '+repr(d['a'])),mode=mode)
     run('grapheme '+mode+' delete',['\x1b[3~','\x13'],lambda d,s:check(d['a']=='ABC','cluster delete corrupted text: '+repr(d['a'])),mode=mode)

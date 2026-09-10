@@ -1,5 +1,7 @@
 # mdok — Markdown OK
 
+0.1.7: KaTeX/MathJax 수식 진단, 안전한 구분자 변환, Markdown 구조·Git 비교를 추가했습니다. **Ctrl+O M** 수식 도구 / **Ctrl+O D** 비교. [사용법과 한계](docs/math-tools.md).
+
 0.1.6부터 TUI는 **뷰어 모드로 시작**합니다. 본문에서 **Enter → 소스+미리보기 분할 편집**으로 전환하며, 편집 중 Enter는 줄바꿈입니다. 메뉴/입력창의 Enter 동작은 그대로 유지됩니다.
 
 0.1.6에 VS Code/Pandoc 선택 연동과 [Markdown 호환 범위](docs/markdown-compatibility.md)를 추가했습니다. TUI는 LaTeX 수식을 조판하지 않으며, Pandoc 변환은 별도 도구 설치가 필요합니다. 실제 변환 품질은 아직 미검증입니다.

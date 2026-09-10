@@ -2,6 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import chalk from "chalk";
 import { qrInputAction } from "./qr-input.js";
 import { paneWidths } from "./layout.js";
+import {checkMath,diagnosticText,type EngineReport} from './math-engine.js';
+import {mathTokens,applyConversion,type MathEngine,type DelimiterPolicy,type ConversionPlan} from './math.js';
+import {comparisonLines,type Comparison} from './compare.js';
+import {gitSnapshots,decodeText} from './git-snapshots.js';
+import {linePosition,safeDisplay} from './document-analysis.js';
+import {compareAsync,convertAsync} from './analysis-jobs.js';
 import { exportPandoc, openVsCode, PROFILES, FORMATS, type Profile } from "./integrations.js";
 import { Box, Text, useApp, useInput, useWindowSize, type Key } from "ink";
 import { readFile, readdir } from "node:fs/promises";
@@ -30,7 +36,7 @@ import {
 
 type Focus = "editor" | "preview" | "side";
 type ViewMode = "split" | "source" | "preview";
-type OverlayKind = "file" | "pandoc" | "open" | "ask" | "find" | "run" | "lint" | "diff" | "sync" | "settings" | "help" | "qr";
+type OverlayKind = "file" | "math" | "math-problems" | "compare-input" | "compare" | "pandoc" | "open" | "ask" | "find" | "run" | "lint" | "diff" | "sync" | "settings" | "help" | "qr";
 
 interface BtnSpan {
   id: string;
@@ -329,6 +335,30 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const [repIdx, setRepIdx] = useState(0);
   const [find, setFind] = useState<{ pattern: string; idx: number } | null>(null);
   const [problems, setProblems] = useState<LintProblem[]>([]);
+  const [mathEngine,setMathEngine]=useState<MathEngine>('basic');
+  const [mathPolicy,setMathPolicy]=useState<DelimiterPolicy>('both');
+  const [mathReport,setMathReport]=useState<{text:string;path:string;key:string;report:EngineReport}|null>(null);
+  const [mathPending,setMathPending]=useState(false);
+  const [mathFilter,setMathFilter]=useState<'all'|'error'|'warning'|'info'>('all');
+  const [compareEdit,setCompareEdit]=useState<MiniEdit>({value:':disk',cur:5});
+  const [comparison,setComparison]=useState<{report:Comparison;title:string;path:string;plan?:ConversionPlan}|null>(null);
+  const [compareTop,setCompareTop]=useState(0);
+  const [compareRaw,setCompareRaw]=useState(false);
+  const [compareWide,setCompareWide]=useState(false);
+  const [compareQuery,setCompareQuery]=useState<MiniEdit|null>(null);
+  const [lastCompareQuery,setLastCompareQuery]=useState('');
+  const compareRun=useRef(0);
+  const compareAbort=useRef<AbortController|null>(null);
+  const [compareLeft,setCompareLeft]=useState(0);
+  useEffect(()=>()=>{compareRun.current++;compareAbort.current?.abort();},[]);
+  useEffect(()=>{setCompareLeft(0);},[comparison,compareRaw,compareWide]);
+  const mathCurrent=mathReport?.text===lines.join('\n')&&mathReport.path===curFile&&mathReport.key===`${mathEngine}:${mathPolicy}`?mathReport.report:null;
+  const mathSyntax=useMemo(()=>mathCurrent?.regions.flatMap(r=>[
+    {start:r.start,end:r.body.start,text:r.open,kind:'delimiter'},
+    ...mathTokens(mathReport!.text.slice(r.body.start,r.body.end),r.body.start),
+    {start:r.body.end,end:r.end,text:r.close,kind:'delimiter'},
+  ])??[],[mathCurrent]);
+  const compareRows=useMemo(()=>comparison?comparisonLines(comparison.report,compareRaw,compareWide?columns-8:0):[],[comparison,compareRaw,compareWide,columns]);
   const [diff, setDiff] = useState<{ start: Cursor; end: Cursor; original: string[]; revised: string[] } | null>(null);
   const [gitMap, setGitMap] = useState<Map<string, string>>(new Map());
   const [gitRootPath, setGitRootPath] = useState<string | null>(null);
@@ -757,10 +787,10 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     uiOpenedAt.current = Date.now();
     if (kind === "ask") setAskEdit({ value: "", cur: 0 });
     if (kind === "lint") {
-      setProblems(lintMarkdown(lines, lang));
+      setProblems(collectProblems());
       setMenuIdx(0);
       setOverlay("lint");
-      if (!lintMarkdown(lines, lang).length) setMsg(t("msg.lintClean"));
+      if (!collectProblems().length) setMsg(mathPending?t('math.pending'):t("msg.lintClean"));
     }
     if (kind === "run") {
       const last = cmdHist[cmdHist.length - 1] ?? "";
@@ -1077,12 +1107,13 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     setFind({ pattern: find.pattern, idx });
     jumpToMatch(matches, idx);
   };
+  const collectProblems = ():LintProblem[] => [...lintMarkdown(lines,lang),...(mathCurrent?.diagnostics??[]).map(d=>({...linePosition(lines.join('\n'),d.start),rule:`math/${d.severity}/${d.code}`,msg:diagnosticText(d,lang)}))];
   const runLint = () => {
-    const found = lintMarkdown(lines, lang);
+    const found = collectProblems();
     setProblems(found);
     setMenuIdx(0);
     setOverlay("lint");
-    if (!found.length) setMsg(t("msg.lintClean"));
+    if (!found.length) setMsg(mathPending?t('math.pending'):t("msg.lintClean"));
   };
   const jumpToProblem = (i: number) => {
     const pr = problems[i];
@@ -1243,6 +1274,29 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     }
   };
   const activateMenuIndex = (idx: number) => {
+    if(overlay==='math') {
+      if(idx===0){setMathEngine(e=>e==='basic'?'katex':e==='katex'?'mathjax':'basic');return;}
+      if(idx===1){const policies:DelimiterPolicy[]=['both','dollar','bracket','off'];setMathPolicy(p=>policies[(policies.indexOf(p)+1)%policies.length]);return;}
+      if(idx===2){setMenuIdx(0);setOverlay('math-problems');return;}
+      if(idx>=3&&idx<=6){
+        const text=lines.join('\n');
+        const offset=(c:Cursor)=>lines.slice(0,c.r).reduce((n,l)=>n+l.length+1,0)+c.c;
+        let selection=sel?{start:offset(orderedSel(sel).start),end:offset(orderedSel(sel).end)}:undefined;
+        if(selection?.start===selection?.end)selection=undefined;
+        if(idx>=5){const at=offset(cursor),r=mathCurrent?.regions.find(r=>r.start<=at&&r.end>=at);if(!r){setMsg(t('math.noCurrent'));return;}selection={start:r.start,end:r.end};}
+        const id=++compareRun.current,path=curFile;compareAbort.current?.abort();const abort=new AbortController();compareAbort.current=abort;
+        void (async()=>{
+          try{
+            const plan=await convertAsync(text,idx===3||idx===5?'dollar':'bracket',selection,'gfm',{signal:abort.signal});
+            const report=await compareAsync(text,plan.result,'gfm',{signal:abort.signal});
+            if(id!==compareRun.current||currentFileRef.current!==path)return;
+            setComparison({report,title:`${t('math.convert')} (${plan.edits.length/2}; ${t('math.skipped')} ${plan.skipped})`,path,plan});
+            setCompareTop(0);setCompareRaw(false);setCompareQuery(null);setOverlay('compare');
+          }catch(e){if(!abort.signal.aborted)setMsg((e as Error).message);}
+        })();
+      }
+      return;
+    }
     if (overlay === 'pandoc') {
       if (integrationBusy.current) return;
       if (idx === 0) { setExportProfile(p => PROFILES[(PROFILES.indexOf(p) + 1) % PROFILES.length]); return; }
@@ -1371,6 +1425,30 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   }, [lines]);
 
   // External change watcher: auto-reload when clean, warn when dirty
+  useEffect(()=>{
+    const abort=new AbortController(),text=lines.join('\n'),path=curFile;
+    setMathPending(true);
+    const timer=setTimeout(()=>{
+      void checkMath(text,mathEngine,{signal:abort.signal,policy:mathPolicy})
+        .then(report=>{if(!abort.signal.aborted){setMathReport({text,path,key:`${mathEngine}:${mathPolicy}`,report});setMathPending(false);}})
+        .catch(e=>{if(!abort.signal.aborted){setMathReport({text,path,key:`${mathEngine}:${mathPolicy}`,report:{regions:[],diagnostics:[{start:0,end:0,code:'resource',severity:'warning',detail:(e as Error).message}],partial:true,engine:mathEngine,revision:0}});setMathPending(false);}});
+    },250);
+    return()=>{clearTimeout(timer);abort.abort();};
+  },[lines,curFile,mathEngine,mathPolicy]);
+  const submitComparison=async()=>{
+    const id=++compareRun.current,text=lines.join('\n'),path=curFile,query=compareEdit.value;
+    compareAbort.current?.abort();const abort=new AbortController();compareAbort.current=abort;
+    try{
+      const pair=query===':disk'?{old:decodeText(await readFile(path)),new:text,label:`${path}: disk ↔ buffer`}:
+        [':staged',':unstaged',':head'].includes(query)?await gitSnapshots(path,query.slice(1) as 'staged'|'unstaged'|'head'):
+        {old:decodeText(await readFile(query)),new:text,label:`${query} ↔ ${path} (buffer)`};
+      if(id!==compareRun.current || currentFileRef.current!==path)return;
+      const report=await compareAsync(pair.old,pair.new,'gfm',{signal:abort.signal});
+      if(id!==compareRun.current||currentFileRef.current!==path)return;
+      setComparison({report,title:pair.label,path});
+      setCompareTop(0);setCompareRaw(false);setCompareQuery(null);setOverlay('compare');
+    }catch(e){if(id===compareRun.current)setMsg((e as Error).message);}
+  };
   const lastExtChange = useRef(0);
   useEffect(() => {
     let w: { close: () => void } | null = null;
@@ -1504,7 +1582,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         if (pressed && btn === 0 && !(cb & 32)) setOverlay(null);
         return;
       }
-      if ((g.overlay === "file" || g.overlay === "pandoc" || g.overlay === "open" || g.overlay === "lint") && pressed && btn === 0 && !(cb & 32)) {
+      if ((g.overlay === "file" || g.overlay === "math" || g.overlay === "pandoc" || g.overlay === "open" || g.overlay === "lint") && pressed && btn === 0 && !(cb & 32)) {
         const geom = overlayGeomRef.current;
         if (geom && y >= geom.top + 2 && y < geom.top + 2 + geom.count && x >= geom.left && x < geom.left + geom.width) {
           actionsRef.current.activateMenuIndex(y - (geom.top + 2));
@@ -1758,6 +1836,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       }
       if (key.escape) {
         if (Date.now() - uiOpenedAt.current < 300) return;
+        if(overlay==='compare-input'||overlay==='math'){compareRun.current++;compareAbort.current?.abort();}
+        if(overlay==='compare'&&compareQuery){setCompareQuery(null);return;}
         if (overlay === "settings" && setEditing) setSetEditing(null);
         else setOverlay(null);
         return;
@@ -1766,8 +1846,46 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         setOverlay(null);
         return;
       }
-      if (overlay === "file" || overlay === 'pandoc') {
-        const count = overlay === 'file' ? 9 : 6;
+      if(overlay==='compare-input'){editMini(setCompareEdit,compareEdit,input,key,()=>void submitComparison());return;}
+      if(overlay==='compare'&&comparison){
+        const height=Math.max(1,rowsSafe-10-(tabsVisible?1:0)-(compareQuery?1:0)),max=Math.max(0,compareRows.length-height);
+        if(compareQuery){editMini(setCompareQuery,compareQuery,input,key,()=>{
+          const query=compareQuery.value;setLastCompareQuery(query);setCompareQuery(null);
+          if(/^:\d+$/.test(query))setCompareTop(clamp(Number(query.slice(1))-1,0,max));
+          else {const index=compareRows.findIndex(r=>r.toLowerCase().includes(query.toLowerCase()));if(index>=0)setCompareTop(clamp(index,0,max));}
+        });return;}
+        if(input==='r'){setCompareRaw(v=>!v);setCompareTop(0);}
+        else if(key.tab){setCompareWide(v=>!v);setCompareTop(0);}
+        else if(input==='/')setCompareQuery({value:'',cur:0});
+        else if(input==='n'||input==='N'||input===']'||input==='['){
+          const direction=input==='N'||input==='['?-1:1;
+          for(let at=compareTop+direction;at>=0&&at<compareRows.length;at+=direction){
+            if((input==='n'||input==='N')?lastCompareQuery&&compareRows[at].toLowerCase().includes(lastCompareQuery.toLowerCase()):/^@@|^[+-] /.test(compareRows[at])){setCompareTop(clamp(at,0,max));break;}
+          }
+        }
+        else if(key.upArrow)setCompareTop(v=>clamp(v-1,0,max));
+        else if(key.downArrow)setCompareTop(v=>clamp(v+1,0,max));
+        else if(key.pageUp)setCompareTop(v=>clamp(v-height,0,max));
+        else if(key.pageDown)setCompareTop(v=>clamp(v+height,0,max));
+        else if(key.leftArrow)setCompareLeft(v=>Math.max(0,v-20));
+        else if(key.rightArrow)setCompareLeft(v=>Math.min(Math.max(0,compareRows.reduce((m,r)=>Math.max(m,strWidth(r)),0)-Math.max(1,cols-10)),v+20));
+        else if(input==='y'&&comparison.plan){
+          try{if(comparison.path!==curFile)throw Error('Document changed');const next=applyConversion(lines.join('\n'),comparison.plan);pushUndo({lines,cursor},'math-convert');setLines(next.split('\n'));setCursor({r:0,c:0});setSel(null);setOverlay(null);}
+          catch(e){setMsg((e as Error).message);}
+        }
+        return;
+      }
+      if(overlay==='math-problems'){
+        if(input==='f'){const filters=['all','error','warning','info'] as const;setMathFilter(v=>filters[(filters.indexOf(v)+1)%filters.length]);setMenuIdx(0);return;}
+        const diagnostics=(mathCurrent?.diagnostics??[]).filter(d=>mathFilter==='all'||d.severity===mathFilter),n=diagnostics.length;
+        if(!n)return;
+        if(key.upArrow)setMenuIdx(v=>(v+n-1)%n);
+        else if(key.downArrow)setMenuIdx(v=>(v+1)%n);
+        else if(key.return){const d=diagnostics[Math.min(menuIdx,n-1)],p=linePosition(lines.join('\n'),d.start);setCursor({r:p.line,c:p.col});setPvTop(clamp(p.line,0,maxPvTop));setOverlay(null);}
+        return;
+      }
+      if (overlay === "file" || overlay === 'pandoc' || overlay === 'math') {
+        const count = overlay === 'file' ? 9 : overlay==='math'?7:6;
         if (key.upArrow) setMenuIdx((i) => (i + count - 1) % count);
         else if (key.downArrow) setMenuIdx((i) => (i + 1) % count);
         else if (key.return) activateMenuIndex(menuIdx);
@@ -1905,6 +2023,10 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         setQuitArmed(false);
       } else if (input === "f") {
         void openOverlayKind("file");
+      } else if(input==='M'){
+        setMenuIdx(0);setOverlay('math');
+      } else if(input==='D'){
+        setOverlay('compare-input');
       } else if (input === "r") {
         void openOverlayKind("qr");
       } else if (input === "a") {
@@ -2282,6 +2404,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
 
   // ---- Centered overlay box; menuCount>0 rows are clickable (see handler) ----
   const centerBox = (title: string, body: React.ReactNode[], hint: string, menuCount?: number, width?: number) => {
+    const bounded=overlay==='math'||overlay==='math-problems'||overlay==='compare'||overlay==='compare-input';
     const boxW = Math.min(width ?? 56, cols - 6);
     const boxH = body.length + 4;
     const top = midStart + Math.max(0, Math.floor((midH - boxH) / 2));
@@ -2292,9 +2415,9 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         {top - 1 > 0 ? <Box height={top - 1} /> : null}
         <Box marginLeft={left}>
           <Box flexDirection="column" width={boxW} borderStyle="round" borderColor={theme.accent}>
-            <Text bold> {title}</Text>
+            <Text bold wrap={bounded?'truncate':'wrap'}> {title}</Text>
             {body}
-            <Text dimColor> {hint}</Text>
+            <Text dimColor wrap={bounded?'truncate':'wrap'}> {hint}</Text>
           </Box>
         </Box>
       </Box>
@@ -2302,6 +2425,27 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   };
 
   const renderOverlay = () => {
+    if(overlay==='math'){
+      const items=[`${t('math.engine')}: ${mathCurrent?.engine??mathEngine}`,`${t('math.delimiters')}: ${mathPolicy}`,t('math.problems'),t('math.toDollar'),t('math.toBracket'),t('math.currentDollar'),t('math.currentBracket')];
+      return centerBox(t('math.title'),items.map((v,i)=><Text key={i} inverse={i===menuIdx} wrap="truncate">{i+1} {v}</Text>),t('menu.keys'),items.length);
+    }
+    if(overlay==='math-problems'){
+      const ds=(mathCurrent?.diagnostics??[]).filter(d=>mathFilter==='all'||d.severity===mathFilter),height=Math.max(1,rowsSafe-9),start=Math.max(0,Math.min(menuIdx,ds.length-1)-Math.floor(height/2));
+      return centerBox(`${t('math.problems')} [${mathFilter}]`,ds.length?ds.slice(start,start+height).map((d,i)=>{
+        const p=linePosition(lines.join('\n'),d.start);
+        return <Text key={i} inverse={i+start===menuIdx} wrap="truncate">{d.severity==='error'?'E':d.severity==='warning'?'W':'?'} L{p.line+1}:{p.col+1} {safeDisplay(diagnosticText(d,lang))}</Text>;
+      }):[<Text key="empty">{mathPending?t('math.pending'):t('math.none')}</Text>],t('math.problemKeys'),undefined,Math.max(30,cols-4));
+    }
+    if(overlay==='compare-input')return centerBox(t('compare.title'),[<Text key="input" wrap="truncate">{renderMiniCursor(compareEdit)}</Text>],t('compare.inputHint'),undefined,Math.max(30,cols-4));
+    if(overlay==='compare'&&comparison){
+      const height=Math.max(1,rowsSafe-10-(tabsVisible?1:0)-(compareQuery?1:0));
+      return centerBox(t('compare.title'),[
+        <Text key="title" wrap="truncate">{safeDisplay(comparison.title)}</Text>,
+        <Text key="mode" wrap="truncate">{compareRaw?t('compare.raw'):t('compare.structure')} {compareTop+1}/{compareRows.length}{comparison.report.partial?' [partial]':''}</Text>,
+        ...compareRows.slice(compareTop,compareTop+height).map((r,i)=><Text key={i} wrap="truncate" color={r.startsWith('+')?'green':r.startsWith('-')?'red':undefined}>{sliceByWidth(r,compareLeft,Math.max(1,cols-10)).text}</Text>),
+        ...(compareQuery?[<Text key="query" wrap="truncate">/{renderMiniCursor(compareQuery)}</Text>]:[]),
+      ],comparison.plan?t('compare.applyKeys'):t('compare.keys'),undefined,Math.max(30,cols-4));
+    }
     if (overlay === 'pandoc') {
       const items = [`${t('integration.profile')}: ${exportProfile}`, 'DOCX', 'EPUB', 'LaTeX (.tex)', 'HTML (MathML)', t('integration.pdf')];
       return centerBox('Pandoc', items.map((label, i) => <Text key={i} inverse={i === menuIdx}>{i === menuIdx ? '>' : ' '} {i + 1} {label}</Text>), t('integration.trusted'), items.length);
@@ -2517,9 +2661,11 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         }
             const showCursor = !!vw.cursor && r === vw.cursor.r && vw.focusEd;
             const ccur = vw.cursor ? vw.cursor.c : -1;
-            const runs: Array<{ text: string; style: "plain" | "sel" | "cur" | "find" | "findcur" }> = [];
+            type RunStyle = "plain" | "sel" | "cur" | "find" | "findcur" | 'math' | 'command' | 'error' | 'warning' | 'unknown';
+            const runs: Array<{ text: string; style: RunStyle }> = [];
+            const rowOffset=vw.focusEd?L.slice(0,r).reduce((n,l)=>n+l.length+1,0):0;
             let runW = 0;
-            const push = (ch: string, cw: number, style: "plain" | "sel" | "cur" | "find" | "findcur") => {
+            const push = (ch: string, cw: number, style: RunStyle) => {
               const last = runs[runs.length - 1];
               if (last && last.style === style) last.text += ch;
               else runs.push({ text: ch, style });
@@ -2535,7 +2681,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
               const curTi = ti;
               ti += ch.length;
               if (col <= vw.edLeft || c0 >= winEnd) continue;
-              let style: "plain" | "sel" | "cur" | "find" | "findcur" = "plain";
+              let style: RunStyle = "plain";
               if (selA >= 0 && curTi >= selA && curTi < selB) style = "sel";
               else if (showCursor && curTi === ccur) style = "cur";
               else if (vw.showFind && curFindIdx >= 0) {
@@ -2543,6 +2689,12 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
                   (mm) => mm.r === r && curTi >= mm.c && curTi < mm.c + mm.len,
                 );
                 if (m) style = findMatches[curFindIdx] === m ? "findcur" : "find";
+              }
+              if(style==='plain'&&vw.focusEd){
+                const at=rowOffset+curTi;
+                const diagnostic=mathCurrent?.diagnostics.find(d=>d.start<=at&&at<d.end);
+                if(diagnostic)style=diagnostic.severity==='error'?'error':diagnostic.severity==='warning'?'warning':'unknown';
+                else {const token=mathSyntax.find(t=>t.start<=at&&at<t.end);if(token)style=token.kind==='command'?'command':'math';}
               }
               push(ch, cw, style);
             }
@@ -2562,7 +2714,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
                   ) : run.style === "find" ? (
                     <Text key={k} backgroundColor={theme.findBg} color={theme.findFg}>{run.text}</Text>
                   ) : (
-                    <Text key={k}>{run.text}</Text>
+                    <Text key={k} color={run.style==='error'?'red':run.style==='warning'?'yellow':run.style==='unknown'?'gray':run.style==='command'?'cyan':run.style==='math'?'magenta':undefined} underline={run.style==='error'||run.style==='warning'}>{run.text}</Text>
                   ),
                 )}
               </Text>
@@ -2701,6 +2853,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         ) : (
           <Text dimColor wrap="truncate">{t(viewMode === "preview" ? "hint.viewer" : "hint.default")} · {stats.words}w{vimOn ? (vimInsert ? ` · ${t("status.insert")}` : ` · ${t("status.normal")}`) : ""}{gitSt ? ` · git:${gitSt.branch}${gitSt.ahead ? `⇡${gitSt.ahead}` : ""}${gitSt.behind ? `⇣${gitSt.behind}` : ""}${gitSt.conflict ? " !conflict" : ""}` : ""}{asking ? t("hint.asking") : ""}</Text>
         )}
+        {!overlay && !term ? <Text dimColor wrap="truncate"> · {mathPending?t('math.pending'):`${mathCurrent?.engine??mathEngine} E${mathCurrent?.diagnostics.filter(d=>d.severity==='error').length??0} W${mathCurrent?.diagnostics.filter(d=>d.severity==='warning').length??0} ?${mathCurrent?.diagnostics.filter(d=>d.severity==='info').length??0}`}</Text>:null}
         {msg ? <Text> — {msg}</Text> : null}
       </Box>
     </Box>

@@ -2,6 +2,11 @@
 
 Version: 0.1.6. External integrations are experimental; real conversion fidelity is not certified.
 
+Version 0.1.7 additions: local math highlighting/diagnostics, restricted
+KaTeX/MathJax validation, delimiter conversion and structural/Git comparison.
+See [math tools and exact limits](math-tools.md). These do not add typeset math
+to the TUI or change the built-in HTML renderer.
+
 Markdown has dialects/extensions, not one universal app-version format. VS Code is an editor, not a Markdown dialect; preview extensions may interpret documents differently. mdok does not promise identical rendering or lossless conversion between all applications.
 
 | Feature | Built-in TUI / HTML | Optional Pandoc export |

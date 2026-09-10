@@ -27,9 +27,10 @@ const jobs = process.argv.includes("--all")
   : [{ target: arg("--target") ?? "bun-darwin-arm64", out: arg("--out") ?? join(root, "dist-pkg", "mdok") }];
 
 mkdirSync(join(root, "dist-pkg"), { recursive: true });
+execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run','build'], {cwd:root,stdio:'inherit'});
 for (const { target, out } of jobs) {
   console.log(`building ${out} (${target})…`);
-  execFileSync("bun", ["build", "--compile", "--target", target, "src/index.ts", "--outfile", out],
+  execFileSync("bun", ["build", "--compile", "--target", target, "dist/index.js", "dist/analysis-worker.js", "dist/math-engine-worker.js", "--outfile", out],
     { cwd: root, stdio: "inherit" });
 }
 console.log("done");

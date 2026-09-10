@@ -12,8 +12,8 @@ if (mode === "slow-save") {
 os.homedir = () => dir;
 syncBuiltinESMExports();
 process.chdir(dir);
-const a = mode === "zwj" ? "👩‍💻ABC" : mode === "nfd" ? "한".normalize("NFD") + "ABC" : mode === "emoji" ? "😀ABC" : mode === "format" ? "TRAIL \n\n\nEND" : mode === "table" ? "|a|b|\n|---|---|\n|c|d|" : Array.from({length:60},(_,i)=>`ALPHA line ${i+1}`).join("\n");
-const b = "BRAVO document";
+const a = mode === 'math' ? '# Math\n\n$$x^2$$\n\nInline $y$.\n\n`$code$`' : mode === 'math-bad' ? '$$\\badcmd{x}$$\n\n\\[x' : mode === 'compare-long' ? Array.from({length:100},(_,i)=>`old line ${i}`).join('\n') : mode === "zwj" ? "👩‍💻ABC" : mode === "nfd" ? "한".normalize("NFD") + "ABC" : mode === "emoji" ? "😀ABC" : mode === "format" ? "TRAIL \n\n\nEND" : mode === "table" ? "|a|b|\n|---|---|\n|c|d|" : Array.from({length:60},(_,i)=>`ALPHA line ${i+1}`).join("\n");
+const b = mode === 'compare-long' ? Array.from({length:100},(_,i)=>`new line ${i}`).join('\n') : "BRAVO document";
 const pathA = join(dir,"a.md"), pathB = join(dir,"b.md");
 await fs.writeFile(pathA,a); await fs.writeFile(pathB,b);
 if (process.env.MDOK_AUDIT_LANG) await fs.writeFile(join(dir,".mdok.json"),JSON.stringify({lang:process.env.MDOK_AUDIT_LANG,gitSync:false}));

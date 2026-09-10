@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { exportPandoc, PROFILES, FORMATS, type Profile, type ExportFormat } from './integrations.js';
+import {checkMath,diagnosticText} from './math-engine.js';
+import {applyConversion,type MathEngine,type DelimiterPolicy} from './math.js';
+import {comparisonLines} from './compare.js';
+import {gitSnapshots,decodeText,type GitCompareMode} from './git-snapshots.js';
+import {linePosition,type MarkdownProfile} from './document-analysis.js';
+import {compareAsync,convertAsync} from './analysis-jobs.js';
 import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -48,7 +54,7 @@ program.configureHelp({
 program
   .name("mdok")
   .description(ct("cli.description"))
-  .version("0.1.6", "-V, --version", ct("cli.versionHelp"));
+  .version("0.1.7", "-V, --version", ct("cli.versionHelp"));
 
 program
   .command("view")
@@ -163,6 +169,48 @@ program
       console.error(chalk.red(ct("cli.exportFailed", { e: (err as Error).message })));
       process.exitCode = 1;
     }
+  });
+
+program.command('math-check').argument('<file>',ct('cli.fileArg'))
+  .option('--engine <engine>','basic | katex | mathjax','basic')
+  .option('--profile <profile>','gfm | commonmark','gfm')
+  .option('--delimiters <policy>','both | dollar | bracket | off','both')
+  .option('--macros <file>','JSON string macro configuration')
+  .option('--json','JSON diagnostics')
+  .action(async(file:string,opts:{engine:MathEngine;profile:MarkdownProfile;delimiters:DelimiterPolicy;macros?:string;json?:boolean})=>{
+    try {
+      const text=decodeText(await readFile(file));
+      const macros=opts.macros?JSON.parse(await readFile(opts.macros,'utf8')):undefined;
+      const report=await checkMath(text,opts.engine,{profile:opts.profile,policy:opts.delimiters,macros});
+      console.log(opts.json?JSON.stringify({schemaVersion:1,...report}):[report.engine,...report.diagnostics.map(d=>{const p=linePosition(text,d.start);return `${p.line+1}:${p.col+1} ${d.severity} ${diagnosticText(d,cl)}`;})].join('\n'));
+      if(report.partial||report.diagnostics.some(d=>d.severity==='error'||d.severity==='warning'))process.exitCode=1;
+    }catch(e){console.error((e as Error).message);process.exitCode=2;}
+  });
+program.command('math-convert').argument('<file>',ct('cli.fileArg'))
+  .requiredOption('--to <delimiter>','dollar | bracket')
+  .option('--write','Apply after revision check (default: dry-run)')
+  .option('--profile <profile>','gfm | commonmark','gfm')
+  .action(async(file:string,opts:{to:'dollar'|'bracket';write?:boolean;profile:MarkdownProfile})=>{
+    try {
+      const text=decodeText(await readFile(file)),plan=await convertAsync(text,opts.to,undefined,opts.profile);
+      const preview=comparisonLines(await compareAsync(text,plan.result,opts.profile),true).join('\n');
+      if(opts.write){const current=decodeText(await readFile(file));await writeFileAtomic(file,applyConversion(current,plan));}
+      console.log(preview);
+      if(plan.skipped)console.error(`Skipped ambiguous/incomplete math: ${plan.skipped}`);
+    }catch(e){console.error((e as Error).message);process.exitCode=2;}
+  });
+program.command('compare').argument('<file>').argument('[other]')
+  .option('--git <mode>','staged | unstaged | head')
+  .option('--ref <ref>','Base Git commit','HEAD').option('--to-ref <ref>','Other Git commit')
+  .option('--profile <profile>','gfm | commonmark','gfm').option('--raw','Raw line diff').option('--json','Lossless comparison JSON')
+  .action(async(file:string,other:string|undefined,opts:{git?:GitCompareMode;ref:string;toRef?:string;profile:MarkdownProfile;raw?:boolean;json?:boolean})=>{
+    try {
+      if(opts.git&&other)throw Error('Choose two files OR Git comparison');
+      if(!opts.git&&!other)throw Error('Provide another file or --git');
+      const pair=opts.git?await gitSnapshots(file,opts.git,opts.ref,opts.toRef):{old:decodeText(await readFile(file)),new:decodeText(await readFile(other!))};
+      const report=await compareAsync(pair.old,pair.new,opts.profile);
+      console.log(opts.json?JSON.stringify({schemaVersion:1,...report}):comparisonLines(report,opts.raw).join('\n'));
+    }catch(e){console.error((e as Error).message);process.exitCode=2;}
   });
 
 program.command('convert')

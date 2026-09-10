@@ -1,5 +1,9 @@
 # mdok design docs — review guide
 
+새 기능: [수식 도구·비교 사용법과 지원 범위](math-tools.md). 원 설계: [LaTeX 작성 지원·Markdown 구조 비교](math-and-structural-diff-design.md).
+
+검증 결과: [수식·구조 비교 회귀 검증](math-verification-2026-09-11.md).
+
 Markdown dialects, math limitations and optional external tools: [Compatibility](markdown-compatibility.md).
 
 > **최신 통합 설계 (2026-09-11): [제품 명세·설계 v0.1](product-design-2026-09-11.md)** — 개발 순서, 리더 GUI, 다국어, AI/TTS, QR 수신, E2EE 공유와 단계별 검증을 통합. 아래 문서의 과거 결정과 충돌하면 최신 통합 설계를 우선한다.
