@@ -11,6 +11,7 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false # one OS failing must not cancel the others
       matrix:
         include:
           # macOS arm64 runner cross-builds both mac binaries (bun cross-compile)
@@ -35,11 +36,16 @@ jobs:
             name="${pair##*:}"
             bun build --compile --target "$target" src/index.ts --outfile "$name"
           done
-      - name: Smoke test
+      - name: Smoke test (native arch only; cross-built binaries can't execute here)
         shell: bash
         run: |
+          host="$(uname -m)"
           for pair in ${{ matrix.targets }}; do
+            target="${pair%%:*}"
             name="${pair##*:}"
+            case "$target" in *-arm64) want=arm64;; *) want=x64;; esac
+            have=x64; [ "$host" = "arm64" ] && have=arm64
+            if [ "$want" != "$have" ]; then echo "skip smoke $name (cross-built)"; continue; fi
             ./"$name" --help >/dev/null
             ./"$name" lint README.md
           done
