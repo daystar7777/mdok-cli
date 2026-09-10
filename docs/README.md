@@ -1,5 +1,7 @@
 # mdok design docs — review guide
 
+개발 버전: [Explore 전체 화면 파일 탐색기](explorer.md).
+
 새 기능: [수식 도구·비교 사용법과 지원 범위](math-tools.md). 원 설계: [LaTeX 작성 지원·Markdown 구조 비교](math-and-structural-diff-design.md).
 
 검증 결과: [수식·구조 비교 회귀 검증](math-verification-2026-09-11.md).

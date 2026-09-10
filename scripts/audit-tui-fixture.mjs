@@ -16,10 +16,20 @@ const a = mode === 'math' ? '# Math\n\n$$x^2$$\n\nInline $y$.\n\n`$code$`' : mod
 const b = mode === 'compare-long' ? Array.from({length:100},(_,i)=>`new line ${i}`).join('\n') : "BRAVO document";
 const pathA = join(dir,"a.md"), pathB = join(dir,"b.md");
 await fs.writeFile(pathA,a); await fs.writeFile(pathB,b);
+if(mode==='explorer'){
+  await fs.mkdir(join(dir,'folder'));await fs.writeFile(join(dir,'folder','child.md'),'CHILD document');
+  await fs.writeFile(join(dir,'.hidden.md'),'hidden');await fs.writeFile(join(dir,'binary.bin'),Buffer.from([0,255]));
+  for(let i=0;i<45;i++)await fs.writeFile(join(dir,`doc-${String(i).padStart(2,'0')}.md`),`DOC ${i}`);
+}
 if (process.env.MDOK_AUDIT_LANG) await fs.writeFile(join(dir,".mdok.json"),JSON.stringify({lang:process.env.MDOK_AUDIT_LANG,gitSync:false}));
 try {
   const {runTui} = await import("../dist/tui.js");
-  await runTui(mode === "two" || mode === "slow-save" ? [{path:pathA,content:a},{path:pathB,content:b}] : [{path:pathA,content:a}],0);
+  const initialTabs = mode === "two" || mode === "slow-save" ? [{path:pathA,content:a},{path:pathB,content:b}] : [{path:pathA,content:a}];
+  if(mode==='many')for(let i=2;i<=10;i++){
+    const path=join(dir,`아주 긴 문서 이름 👩‍💻 ${i}.md`),content=`DOCUMENT_${i}_ONLY`;
+    await fs.writeFile(path,content);initialTabs.push({path,content});
+  }
+  await runTui(initialTabs,0);
   const session = JSON.parse(await fs.readFile(join(dir,".mdok-session.json"),"utf8"));
   const saved = Object.fromEntries(await Promise.all((await fs.readdir(dir)).filter(name=>name.endsWith(".md")).map(async name=>[name,await fs.readFile(join(dir,name),"utf8")])));
   const language=await fs.readFile(join(dir,".mdok.json"),"utf8").then(raw=>JSON.parse(raw).lang).catch(()=>null);

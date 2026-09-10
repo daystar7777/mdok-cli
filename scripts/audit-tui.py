@@ -43,7 +43,15 @@ def run(name, actions, verify, mode='plain', width=120, lang=None, override=None
         screens.append(initial)
         for action in actions:
             if isinstance(action,dict):
-                os.write(master,action['key'].encode())
+                if 'click' in action:
+                    import unicodedata
+                    label=action['click']
+                    rows=screens[-1].splitlines()
+                    row=next(i for i,line in enumerate(rows) if label in line)
+                    before=rows[row].split(label)[0]
+                    col=sum(0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in ('W','F') else 1 for c in before)+2
+                    os.write(master,f'\x1b[<0;{col};{row+1}M'.encode())
+                else: os.write(master,action['key'].encode())
             elif isinstance(action,tuple):
                 rows,cols=action
                 fcntl.ioctl(master,termios.TIOCSWINSZ,struct.pack('HHHH',rows,cols,0,0))
@@ -51,7 +59,7 @@ def run(name, actions, verify, mode='plain', width=120, lang=None, override=None
             else: os.write(master,action.encode())
             # Worker-backed math/comparison opens asynchronously. Keep one screen
             # per action so assertions retain their exact event indices.
-            screens.append(drain(action['wait'] if isinstance(action,dict) else 0.8 if name.startswith('math ') else 0.22 if action!='\x13' else 0.4))
+            screens.append(drain(action.get('wait',0.5) if isinstance(action,dict) else 0.8 if name.startswith('math ') else 0.4 if name.startswith('explore ') else 0.22 if action!='\x13' else 0.4))
         # Exit may need confirmation for unsaved fixtures; preserve session evidence.
         if process.poll() is None:
             drain(0.2) # Let the overlay's 300ms opening guard expire before Esc.
@@ -89,9 +97,17 @@ def check(condition,message):
 def unchanged(d,s): check(d['a'].startswith('ALPHA'),'View-mode typing changed file: '+repr(d['a'][:24]))
 def buffer(d,i=0):
     f=d['session']['files'][i];return f.get('content',d['a'] if f['path'].endswith('a.md') else d['b'])
+def final_frame(s):
+    return re.split(r'(?=\[>\] mdok)',s)[-1]
 
 run('single-file view cycle',['\x0fv','\x0fv','\x0fv'],lambda d,s: check('[View]' in s[2] and 'ALPHA' in s[2] and '[Split]' in s[3],'body missing on mode transition'))
-run('two-file View renders both documents',['\x0fv','\x0fv'],lambda d,s:check('ALPHA' in s[-1] and 'BRAVO' in s[-1],'one preview is missing'),mode='two')
+run('two-file View renders only selected document',['\x0fv','\x0fv','\x0f2'],lambda d,s:check('ALPHA' in final_frame(s[-2]) and 'BRAVO' not in final_frame(s[-2]) and 'BRAVO' in final_frame(s[-1]) and 'ALPHA' not in final_frame(s[-1]),'inactive document visible or selected document missing'),mode='two')
+run('selected document Split mouse tab switching',['\x1b[<0;12;2M'],lambda d,s:check('ALPHA' in final_frame(s[0]) and 'BRAVO' not in final_frame(s[0]) and 'BRAVO' in final_frame(s[-1]) and 'ALPHA' not in final_frame(s[-1]) and '[Split]' in final_frame(s[-1]),'Split did not show only selected document'),mode='two')
+run('selected document preserves unsaved buffers',['X','\x0f2','Y','\x0f1'],lambda d,s:check(buffer(d,0).startswith('XALPHA') and buffer(d,1).startswith('YBRAVO') and 'XALPHA' in final_frame(s[-1]) and 'YBRAVO' not in final_frame(s[-1]),'switch lost or mixed unsaved buffers'),mode='two')
+run('selected document narrow name navigation',['\x1b[<0;11;2M'],lambda d,s:check('BRAVO' in final_frame(s[-1]) and 'ALPHA' not in final_frame(s[-1]) and '[2 b.md]' in final_frame(s[-1]),'narrow tab navigation failed'),mode='two',width=40,start_edit=False)
+run('selected document second source mouse edit',['\x0f2','\x1b[<0;8;5M','X','\x13'],lambda d,s:check(d['a'].startswith('ALPHA') and 'X' in d['b'] and d['b'].replace('X','')=='BRAVO document','mouse edit targeted wrong document'),mode='two')
+run('selected document ten unicode names resize',['\x0f9',(30,40),(30,120)],lambda d,s:check('DOCUMENT_9_ONLY' in final_frame(s[-1]) and 'DOCUMENT_8_ONLY' not in final_frame(s[-1]) and 'ALPHA' not in final_frame(s[-1]) and len(d['session']['files'])==10,'many names lost selected content or buffers'),mode='many',start_edit=False)
+run('selected document narrow opens another file',['\x0ff','3','2'],lambda d,s:check(len(d['session']['files'])==2 and 'BRAVO' in final_frame(s[-1]) and 'ALPHA' not in final_frame(s[-1]),'narrow open still constrained by document count'),width=40)
 run('View Tab cannot edit hidden source',['\x0fv','\x0fv','\t','X','\x13'],unchanged)
 run('emoji backspace keeps valid text',['\x1b[C','\x7f','\x13'],lambda d,s:check(d['a']=='ABC','saved '+repr(d['a'])),mode='emoji')
 run('emoji delete keeps valid text',['\x1b[3~','\x13'],lambda d,s:check(d['a']=='ABC','saved '+repr(d['a'])),mode='emoji')
@@ -147,6 +163,26 @@ run('math compare long diff beyond 60 lines',['\x0fD']+['\x7f']*5+['b.md','\r','
 run('math compare query jump and Escape stays in comparison',['X','\x0fD','\r','/',':1','\r','/','\x1b'],lambda d,s:check('Markdown comparison' in s[-1] and buffer(d).startswith('XALPHA'),'search/jump leaked'))
 run('math narrow compare query remains visible',['X','\x0fD','\r','/'],lambda d,s:check('Markdown comparison' in s[-1] and '/' in s[-1] and buffer(d).startswith('XALPHA'),'narrow comparison overflow'),width=40)
 run('math narrow diagnostics returns to document',['\x0fM','3','\x1b'],lambda d,s:check('Unclosed' in s[-2] and '[Split]' in s[-1],'narrow diagnostics overflow'),width=40,mode='math-bad')
+run('explore header mouse opens full screen',[{'click':'[Explore]'}],lambda d,s:check('[Explore] mdok' in s[-1] and 'New MD' in s[-1] and 'ALPHA line 1' not in s[-1],'Explore did not replace document screen'))
+run('explore Escape preserves cursor and source',['\x1b[C','\x0fE','\x1b','X','\x13'],lambda d,s:check(d['a'].startswith('AXLPHA') and len(d['session']['files'])==1,'return changed editor state'))
+run('explore open replaces document in viewer',['\x0fE','/','b.md','\r','\x1b[B','\r'],lambda d,s:check('[View]' in s[-1] and 'BRAVO document' in s[-1] and len(d['session']['files'])==1 and d['session']['files'][0]['path'].endswith('b.md'),'open did not replace current document'))
+run('explore dirty cancel retains document',['X','\x0fE','/','b.md','\r','\x1b[B','\r','c','\x1b'],lambda d,s:check(buffer(d).startswith('XALPHA') and d['a'].startswith('ALPHA'),'cancel lost changes'))
+run('explore dirty save before opening',['X','\x0fE','/','b.md','\r','\x1b[B','\r','s'],lambda d,s:check(d['a'].startswith('XALPHA') and d['session']['files'][0]['path'].endswith('b.md'),'save/open failed'))
+run('explore dirty discard before opening',['X','\x0fE','/','b.md','\r','\x1b[B','\r','d'],lambda d,s:check(d['a'].startswith('ALPHA') and d['session']['files'][0]['path'].endswith('b.md'),'discard/open failed'))
+run('explore creates Korean Markdown in split',['\x0fE','n','새 문서','\r','HELLO','\x13'],lambda d,s:check(d['saved'].get('새 문서.md')=='HELLO' and len(d['session']['files'])==1 and '[Split]' in s[-3],'new Markdown failed'))
+run('explore existing name never overwritten',['\x0fE','n','a.md','\r'],lambda d,s:check(d['a'].startswith('ALPHA') and 'EEXIST' in s[-1],'existing file overwritten or failure hidden'))
+run('explore mouse selects and opens',['\x0fE','\x1b[<0;8;7M',{'click':'[Open]'}],lambda d,s:check('[View]' in s[-1] and 'BRAVO document' in s[-1],'mouse Open failed'))
+run('explore double click opens file',['\x0fE',{'key':'\x1b[<0;8;7M','wait':0.1},{'key':'\x1b[<0;8;7M','wait':0.5}],lambda d,s:check('BRAVO document' in s[-1] and '[View]' in s[-1],'double click failed'))
+run('explore narrow screen and Korean',['\x0fE','\x1b'],lambda d,s:check('[Explore] mdok' in s[-2] and '돌아' not in buffer(d) and '[분할]' in s[-1],'narrow explorer failed'),width=40,lang='ko')
+run('explore remembers selection and search on return',['\x0fE','/','b.md','\r','\x1b[B','\x1b','\x0fE','\r'],lambda d,s:check(d['session']['files'][0]['path'].endswith('b.md'),'explorer state was lost'))
+run('explore folder path and child open',['\x0fE','p','\x15','folder','\r','\x1b[B','\r'],lambda d,s:check('CHILD document' in s[-1] and d['session']['files'][0]['path'].endswith('folder/child.md'),'folder navigation failed'),mode='explorer')
+run('explore same path navigation completes',['\x0fE','p','\x15','.','\r'],lambda d,s:check('Loading' not in s[-1].rsplit('[Explore] mdok',1)[-1] and 'b.md' in s[-1].rsplit('[Explore] mdok',1)[-1],'same path stuck loading'))
+run('explore save and reopen same file preserves saved content',['X','\x0fE','/','a.md','\r','\x1b[B','\r','s'],lambda d,s:check(d['a'].startswith('XALPHA') and buffer(d).startswith('XALPHA'),'reopen loaded stale disk content'))
+run('explore hidden toggle and large list scrolling',['\x0fE','h','\x1b[F'],lambda d,s:check('.hidden.md' in s[-2] and 'doc-44.md' in s[-1],'hidden/large listing failed'),mode='explorer')
+run('explore binary open keeps current document',['\x0fE','m','/','binary.bin','\r','\x1b[B','\r'],lambda d,s:check('Binary files' in s[-1] and buffer(d).startswith('ALPHA'),'binary input replaced document'),mode='explorer')
+run('explore narrow mouse back button',['\x0fE',{'click':'[돌아가기]'}],lambda d,s:check('[분할]' in s[-1] and buffer(d).startswith('ALPHA'),'narrow mouse Back failed'),width=40,lang='ko')
+run('explore split mouse bytes do not pollute filename',['\x0fE','n',{'key':'\x1b[<','wait':0.01},{'key':'64;8;7M','wait':0.3},'mouse-clean','\r'],lambda d,s:check('mouse-clean.md' in d['saved'] and len(d['saved'])==3,'mouse bytes entered filename'))
+run('explore mouse save confirmation at fixed bottom row',['X','\x0fE','/','b.md','\r','\x1b[B','\r','\x1b[<0;3;29M'],lambda d,s:check(d['a'].startswith('XALPHA') and d['session']['files'][0]['path'].endswith('b.md'),'bottom Save mouse hitbox failed'))
 for mode,cluster in [('zwj','👩‍💻'),('nfd','한')]:
     run('grapheme '+mode+' backspace',['\x1b[C','\x7f','\x13'],lambda d,s:check(d['a']=='ABC','cluster backspace corrupted text: '+repr(d['a'])),mode=mode)
     run('grapheme '+mode+' delete',['\x1b[3~','\x13'],lambda d,s:check(d['a']=='ABC','cluster delete corrupted text: '+repr(d['a'])),mode=mode)

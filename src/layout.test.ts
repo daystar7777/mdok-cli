@@ -11,7 +11,7 @@ test("View mode gives preview the entire document width", () => {
 
 test("mode transitions never lose width across tabs, sidebar and narrow screens", () => {
   for (const cols of [30,40,60,80,81,120,160,240]) for (const sidebar of [0,22,34]) for (let tabs=1;tabs<=10;tabs++) {
-    const width=Math.max(1,Math.floor((cols-sidebar)/tabs));
+    const width=Math.max(1,cols-sidebar);
     for (const mode of ["split","source","preview","split"] as const) {
       const result=paneWidths(width,mode);
       assert.equal(result.source+result.preview,width);
@@ -22,9 +22,11 @@ test("mode transitions never lose width across tabs, sidebar and narrow screens"
   }
 });
 
-test("both active and inactive TUI previews use the allocated preview width", async () => {
+test("only the selected document uses the full allocated width", async () => {
   const source=await readFile(new URL("./tui.tsx",import.meta.url),"utf8");
   assert.ok(source.includes("renderPreviewPane(pairPreviewW)"));
-  assert.ok(source.includes("w={pairPreviewW}"));
+  assert.ok(source.includes("const pairW = Math.max(1, mainW)"));
+  assert.ok(!source.includes("<StaticPreview"));
+  assert.ok(source.includes("const boxX = g.ox;"));
   assert.ok(!source.includes("pairW - srcW"));
 });

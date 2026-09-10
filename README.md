@@ -106,7 +106,9 @@ Config lives at `~/.mdok.json` (`MDOK_API_KEY`, `MDOK_BASE_URL`, `MDOK_MODEL`,
 | `Tab` (in source) | insert 2 spaces |
 
 Top bar buttons (`[>]` `[Split]` `[Ask]` `[Find]` `[File]` `[Shell]` `[Set]` `[?]` `[X]`,
-plus tab bar with `[+]`) are clickable and mirror the keys above. Sidebar and
+plus file-name tabs) are clickable and mirror the keys above. Only the selected
+document is displayed; Split shows its source and preview. Use `[<]` / `[>]` for
+overflow names. Switching preserves unsaved buffers. Sidebar and
 shell output start closed (`^O b`, `[Shell]` button).
 
 (Note: `Ctrl+M` can't be used — terminals report it as Enter. Use `F10`/`^O m`.)

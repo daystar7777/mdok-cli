@@ -1,6 +1,6 @@
 {
   "name": "@daystar7777/mdok",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Markdown OK — pretty CLI viewer + LLM analysis for .md files (BYOK)",
   "type": "module",
   "bin": {
@@ -37,6 +37,7 @@
     "docs/qr-transfer.md",
     "docs/markdown-compatibility.md",
     "docs/math-tools.md",
+    "docs/explorer.md",
     "README.md",
     "README.ko.md",
     "README.ja.md",

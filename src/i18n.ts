@@ -159,7 +159,7 @@ const en = {
   "help.h5": " ^O L — lint · ^O F — format · ^O | — table · ^O R — AI rewrite",
   "help.h6": " ^O V — vim mode · ^O l — line numbers · Shift+arrows — select",
   "help.h7": " Tab — 2 spaces · F10/^O m — menu bar · mouse — click/drag/wheel",
-  "help.h8": " Ctrl+O M math tools · Ctrl+O D compare · comparison ←→ scroll",
+  "help.h8": " ^O E Explore · ^O M math · ^O D compare (←→ scroll)",
   // messages
   "msg.saved": "saved {f}",
   "msg.saveFailed": "save failed: {e}",
@@ -388,7 +388,7 @@ const ko: Record<MsgKey, string> = {
   "help.h5": " ^O L — 검사 · ^O F — 정리 · ^O | — 표 · ^O R — AI 고쳐쓰기",
   "help.h6": " ^O V — vim 모드 · ^O l — 줄번호 · Shift+방향키 — 선택",
   "help.h7": " Tab — 스페이스 2개 · F10/^O m — 메뉴 · 마우스 — 클릭/드래그/휠",
-  "help.h8": " Ctrl+O M 수식 도구 · Ctrl+O D 비교 · 비교 화면 ←→ 가로 이동",
+  "help.h8": " ^O E 탐색 · ^O M 수식 · ^O D 비교 (←→ 가로 이동)",
   "msg.saved": "{f} 저장됨",
   "msg.saveFailed": "저장 실패: {e}",
   "msg.opened": "{f} 열음",

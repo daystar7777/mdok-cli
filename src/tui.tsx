@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import chalk from "chalk";
 import { qrInputAction } from "./qr-input.js";
 import { paneWidths } from "./layout.js";
+import {ExplorerView,type ExplorerMouse} from './explorer-view.js';
+import {readExplorerFile,createMarkdown,type ExplorerLocation} from './explorer.js';
 import {checkMath,diagnosticText,type EngineReport} from './math-engine.js';
 import {mathTokens,applyConversion,type MathEngine,type DelimiterPolicy,type ConversionPlan} from './math.js';
 import {comparisonLines,type Comparison} from './compare.js';
@@ -13,7 +15,7 @@ import { Box, Text, useApp, useInput, useWindowSize, type Key } from "ink";
 import { readFile, readdir } from "node:fs/promises";
 import { writeFileAtomic } from "./atomic.js";
 import { watch, appendFileSync } from "node:fs";
-import { relative } from "node:path";
+import { relative,dirname,resolve } from "node:path";
 import { lintMarkdown, formatMd, formatTable, diffLines, type LintProblem } from "./lint.js";
 import { BUILTIN_THEMES, loadThemes, themeByName, type TuiTheme } from "./theme.js";
 import { tr, normalizeLang, type Lang, type MsgKey } from "./i18n.js";
@@ -36,7 +38,7 @@ import {
 
 type Focus = "editor" | "preview" | "side";
 type ViewMode = "split" | "source" | "preview";
-type OverlayKind = "file" | "math" | "math-problems" | "compare-input" | "compare" | "pandoc" | "open" | "ask" | "find" | "run" | "lint" | "diff" | "sync" | "settings" | "help" | "qr";
+type OverlayKind = "explore" | "file" | "math" | "math-problems" | "compare-input" | "compare" | "pandoc" | "open" | "ask" | "find" | "run" | "lint" | "diff" | "sync" | "settings" | "help" | "qr";
 
 interface BtnSpan {
   id: string;
@@ -248,30 +250,6 @@ function detachMouseListener() {
   rawKeyHandler = null;
 }
 
-const StaticPreview = React.memo(function StaticPreview({
-  text,
-  w,
-  top,
-  count,
-}: {
-  text: string;
-  w: number;
-  top: number;
-  count: number;
-}) {
-  const rendered = React.useMemo(() => renderMarkdown(text).split("\n"), [text]);
-  const vis = rendered.slice(top, top + count);
-  return (
-    <Box flexDirection="column" width={w} borderStyle="single">
-      {vis.map((ln, i) => (
-        <Text key={i} wrap="truncate">
-          {ln || " "}
-        </Text>
-      ))}
-    </Box>
-  );
-});
-
 function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; startActive: number }) {
   const { exit } = useApp();
   const { columns, rows } = useWindowSize();
@@ -316,6 +294,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const saveQueue = useRef(new Map<string, Promise<void>>());
   const [viewMode, setViewMode] = useState<ViewMode>("preview");
   const [overlay, setOverlay] = useState<OverlayKind | null>(null);
+  const explorerLocation=useRef<ExplorerLocation>({path:dirname(resolve(firstTab.path)),selected:0,top:0,query:'',hidden:false,markdownOnly:true});
+  const explorerMouse=useRef<ExplorerMouse|null>(null);
   const [qr, setQr] = useState<QrTransfer | null>(null);
   const [qrPage, setQrPage] = useState(0);
   const [qrPlaying, setQrPlaying] = useState(false);
@@ -475,7 +455,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const sideW = Math.min(34, Math.max(22, Math.floor(cols * 0.24)));
   const mainW = cols - (sideOpen ? sideW : 0);
   const ox = sideOpen ? sideW : 0;
-  const pairW = Math.max(1, Math.floor(mainW / Math.max(1, tabs.length)));
+  const pairW = Math.max(1, mainW);
   const { source: pairSrcW, preview: pairPreviewW } = paneWidths(pairW, viewMode);
   // Bottom output panel reserves rows when a command ran
   const outH = term ? Math.min(12, Math.max(6, rowsSafe - 12)) : 0;
@@ -655,6 +635,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     lastPush.current = null;
     setCurFile(t.path);
     setLines(t.lines);
+    // Debounce typing, but never display the previous document after switching.
+    setPreviewSrc(t.lines.join("\n"));
     setBaseline(t.baseline);
     setCursor(t.cursor);
     setSel(t.sel);
@@ -680,10 +662,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     const at = tabs.findIndex((t) => t.path === path);
     if (at >= 0) {
       switchTab(at);
-      return;
-    }
-    if (Math.floor(mainW / (tabs.length + 1)) < 30) {
-      setMsg(t("msg.tooNarrow"));
+      setOverlay(null);
       return;
     }
     const snap = snapshotTab();
@@ -739,6 +718,31 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     setOverlay(null);
   };
   const closeTab = () => closeTabAt(active);
+  const chooseExplorerFile=async(path:string,create:boolean,decision?:'save'|'discard')=>{
+    const originalPath=curFile,originalContent=lines.join('\n');
+    if(originalContent!==baseline&&!decision)throw Error('Unsaved changes require confirmation');
+    // Validate/read before changing any editor state. Failed opens keep the buffer.
+    let loaded=create?null:await readExplorerFile(path);
+    if(decision==='save'){
+      await (saveQueue.current.get(originalPath)??Promise.resolve());
+      await writeFileAtomic(originalPath,originalContent);
+      setBaseline(originalContent);
+      // Re-read after saving, including aliases/Unicode-normalized paths that
+      // refer to the same file but are not string-equal to the editor path.
+      if(loaded)loaded=await readExplorerFile(path);
+    }
+    if(currentFileRef.current!==originalPath||linesRef.current.join('\n')!==originalContent)throw Error('Document changed; try again');
+    if(create)await createMarkdown(path);
+    const target=loaded?.path??path;
+    const content=loaded?.content??'';
+    const other=tabs.findIndex((tab,i)=>i!==active&&resolve(tab.path)===target);
+    const fresh:TabSnap=other>=0?tabs[other]:{path:target,lines:content.split('\n'),baseline:content,cursor:{r:0,c:0},sel:null,edTop:0,edLeft:0,pvTop:0,answer:null};
+    setTabs(tabs.map((tab,i)=>i===active?fresh:tab).filter((_,i)=>i!==other));
+    setActive(other>=0&&other<active?active-1:active);restoreTab(fresh);
+    setViewMode(create?'split':'preview');setFocus(create?'editor':'preview');setVimInsert(true);
+    setOverlay(null);setLeader(false);setMsg(t('msg.opened',{f:target}));pushRecent(target);
+    void refreshSideFiles();
+  };
   const switchToFile = async (path: string) => {
     try {
       openTab(path, await readFile(path, "utf-8"));
@@ -1212,6 +1216,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     else if (id === "ask") void a.openOverlayKind("ask");
     else if (id === "find") void a.openOverlayKind("find");
     else if (id === "file") void a.openOverlayKind("file");
+    else if (id === "explore") void a.openOverlayKind("explore");
     else if (id === "qr") void a.openOverlayKind("qr");
     else if (id === "shell") toggleShell();
     else if (id === "set") void a.openOverlayKind("settings");
@@ -1566,6 +1571,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       const btn = cb & 3;
       const x = x1 - 1; // 0-based screen coords (alternate screen => layout rows)
       const y = y1 - 1;
+      if(g.overlay==='explore'){explorerMouse.current?.(cb,x1,y1,pressed);return;}
       if (g.overlay === "qr") return; // fullscreen QR must not activate hidden controls
 
       // Header button bar
@@ -1634,11 +1640,11 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       }
 
       // ---- pairs: locate pair, handle title X + focus ----
-      const nPairs = Math.max(1, g.tabsCount);
+      const nPairs = 1;
       const pw = Math.max(1, g.pairW);
       if (x < g.ox) return; // safety (sidebar handled above)
-      const pp = clamp(Math.floor((x - g.ox) / pw), 0, nPairs - 1);
-      const boxX = g.ox + pp * pw;
+      const pp = g.active;
+      const boxX = g.ox;
       const srcW = g.viewMode === "split" ? g.pairSrcW : g.pairW;
       const titleY = topRow + 1;
       if (process.env.MDOK_MOUSELOG === "1") {
@@ -1667,14 +1673,6 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         }
         return;
       }
-      // Non-active pair: switch focus only (placement/scroll next time)
-      if (pp !== g.active) {
-        if ((pressed && btn === 0 && !(cb & 32)) || cb & 64) {
-          actionsRef.current.switchTab(pp);
-        }
-        return;
-      }
-
       // ---- active pair content ----
       const edRow = contentRow - 1; // editor panes carry a title row
       const inLeft =
@@ -1738,6 +1736,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   }, []);
 
   useInput((input, key) => {
+    if(overlay==='explore')return;
     // QR consumes only explicit commands, before the mouse suppression window.
     if (overlay === "qr" && !key.ctrl) {
       const action = qrInputAction(input, key);
@@ -2023,6 +2022,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         setQuitArmed(false);
       } else if (input === "f") {
         void openOverlayKind("file");
+      } else if(input==='E'){
+        void openOverlayKind('explore');
       } else if(input==='M'){
         setMenuIdx(0);setOverlay('math');
       } else if(input==='D'){
@@ -2327,26 +2328,34 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const midH = rowsSafe - 2 - (tabsVisible ? 1 : 0) - outH;
   const tabBaseOf = (p: string) => p.split("/").pop() || p;
   const tabSpansRef = useRef<Array<{ idx: number; x0: number; x1: number }>>([]);
+  const tabLabels: Array<{idx: number; label: string}> = [];
   {
     const spans: Array<{ idx: number; x0: number; x1: number }> = [];
-    let tx = 1;
-    tabs.forEach((t, i) => {
-      const isDirty = i === active ? lines.join("\n") !== baseline : t.lines.join("\n") !== t.baseline;
-      const label = ` [${i + 1} ${tabBaseOf(t.path)}${isDirty ? "\u25cf" : ""}]`;
+    const capacity = Math.max(1, Math.floor((cols - 10) / 24));
+    const start = Math.max(0, Math.min(active - Math.floor(capacity / 2), tabs.length - capacity));
+    const end = Math.min(tabs.length, start + capacity);
+    const budget = Math.max(1, Math.floor((cols - 10) / (end - start)));
+    if (start > 0) tabLabels.push({idx: start - 1, label: ' [<]'});
+    for (let i = start; i < end; i++) {
+      const tab = tabs[i];
+      const isDirty = i === active ? lines.join("\n") !== baseline : tab.lines.join("\n") !== tab.baseline;
+      const prefix = ` [${i + 1} `;
+      const suffix = `${isDirty ? "\u25cf" : ""}]`;
+      tabLabels.push({idx:i, label: prefix + truncToWidth(safeDisplay(tabBaseOf(tab.path)), Math.max(1,budget-strWidth(prefix+suffix))) + suffix});
+    }
+    if (end < tabs.length) tabLabels.push({idx:end,label:' [>]'});
+    let tx = 0;
+    tabLabels.forEach(({idx:i,label}) => {
       spans.push({ idx: i, x0: tx, x1: tx + strWidth(label) });
       tx += strWidth(label);
     });
-    spans.push({ idx: -1, x0: tx, x1: tx + 4 }); // " [+]"
     tabSpansRef.current = spans;
   }
   {
     const tSpans: Array<{ pair: number; x0: number; x1: number }> = [];
     if (viewMode !== "preview") {
       const sw = viewMode === "split" ? pairSrcW : pairW;
-      tabs.forEach((tb, pi) => {
-        const sx = ox + pi * pairW;
-        tSpans.push({ pair: pi, x0: sx + sw - 4, x1: sx + sw - 1 });
-      });
+      tSpans.push({ pair: active, x0: ox + sw - 4, x1: ox + sw - 1 });
     }
     pairTitleSpansRef.current = tSpans;
   }
@@ -2355,13 +2364,13 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   // ---- Header button bar (spans must match rendered widths exactly) ----
   const viewBtnLabel = `[${viewMode === "split" ? t("btn.split") : viewMode === "source" ? t("btn.src") : t("btn.view")}]`;
   const menuBtn = "[>]"; // toggles the sidebar
-  const fullRight: Array<[string, string]> = [["ask", t("btn.ask")], ["find", t("btn.find")], ["file", t("btn.file")], ["qr", "QR"], ["shell", t("btn.shell")], ["set", t("btn.set")], ["help", t("btn.help")], ["quit", t("btn.quit")]];
+  const fullRight: Array<[string, string]> = [["explore", "Explore"], ["ask", t("btn.ask")], ["find", t("btn.find")], ["file", t("btn.file")], ["qr", "QR"], ["shell", t("btn.shell")], ["set", t("btn.set")], ["help", t("btn.help")], ["quit", t("btn.quit")]];
   const leftFixed = menuBtn.length + 1 + 5 + strWidth(viewBtnLabel) + 1;
   const fullRightWidth = fullRight.reduce((a, [, l]) => a + strWidth(l) + 3, 0);
   const compact = cols < leftFixed + fullRightWidth + 14;
-  const rightDefs: Array<[string, string]> = compact ? [["qr", "QR"], ["quit", "X"]] : fullRight;
+  const rightDefs: Array<[string, string]> = compact ? [["explore", "Explore"], ["qr", "QR"], ["quit", "X"]] : fullRight;
   const rightWidth = rightDefs.reduce((a, [, l]) => a + strWidth(l) + 3, 0);
-  const fileMax = Math.max(6, cols - leftFixed - rightWidth - 2);
+  const fileMax = Math.max(0, cols - leftFixed - rightWidth - 1 - (dirty?2:0));
   let shownFile = curFile;
   if (strWidth(curFile) > fileMax) {
     let tail = "";
@@ -2369,7 +2378,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       if (strWidth(g + tail) > fileMax - 1) break;
       tail = g + tail;
     }
-    shownFile = "…" + tail;
+    shownFile = fileMax ? "…" + tail : '';
   }
   const padMid = Math.max(1, cols - (leftFixed + strWidth(shownFile) + (dirty ? 2 : 0)) - rightWidth);
   {
@@ -2734,6 +2743,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     </Box>
   );
 
+  if(overlay==='explore')return <ExplorerView columns={cols} rows={rowsSafe} lang={lang} location={explorerLocation} mouse={explorerMouse} inputBlocked={()=>Date.now()<junkSuppressUntil} dirty={dirty} onClose={()=>setOverlay(null)} onChoose={chooseExplorerFile}/>;
   if (overlay === "qr" && qr) {
     const fits = qrRows.length + 4 <= rows && (qrRows[0]?.length ?? 0) <= columns;
     const pageLabel = `${qrPage + 1}/${qr.frames.length}`;
@@ -2779,17 +2789,14 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         ))}
       </Box>
       {tabsVisible ? (
-        <Box>
-          {tabs.map((t, i) => {
-            const isDirty = i === active ? lines.join("\n") !== baseline : t.lines.join("\n") !== t.baseline;
-            const label = ` [${i + 1} ${tabBaseOf(t.path)}${isDirty ? "\u25cf" : ""}]`;
+        <Box height={1} flexShrink={0}>
+          {tabLabels.map(({idx:i,label}) => {
             return i === active ? (
-              <Text key={t.path + i} inverse>{label}</Text>
+              <Text key={i} inverse>{label}</Text>
             ) : (
-              <Text key={t.path + i}>{label}</Text>
+              <Text key={i}>{label}</Text>
             );
           })}
-          <Text> [+]</Text>
         </Box>
       ) : null}
       {overlay ? (
@@ -2797,39 +2804,12 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       ) : (
         <Box flexDirection="row" height={midH} flexShrink={0}>
           {sideOpen ? renderSidebar() : null}
-          {tabs.map((tb, pi) => {
-            const isA = pi === active;
-            const srcW = pairSrcW;
-            const base = tb.path.split("/").pop() || tb.path;
-            const isDirty = isA ? lines.join("\n") !== baseline : tb.lines.join("\n") !== tb.baseline;
-            const lastW = pi === tabs.length - 1;
-            return (
-              <Box
-                key={`${tb.path}::${pi}`}
-                flexDirection="row"
-                width={lastW ? undefined : pairW}
-                flexGrow={lastW ? 1 : 0}
-              >
-                {viewMode === "preview" ? null : renderEditorPane(
-                  srcW,
-                  isA ? lines : tb.lines,
-                  isA
-                    ? { cursor, sel, edTop, edLeft, focusEd: focus === "editor", showFind: true, title: { name: base, dirty: isDirty } }
-                    : { cursor: null, sel: null, edTop: tb.edTop, edLeft: tb.edLeft, focusEd: false, showFind: false, title: { name: base, dirty: isDirty } },
-                )}
-                {viewMode === "source" ? null : isA ? (
-                  renderPreviewPane(pairPreviewW)
-                ) : (
-                  <StaticPreview
-                    text={tb.lines.join("\n")}
-                    w={pairPreviewW}
-                    top={tb.pvTop}
-                    count={innerH}
-                  />
-                )}
-              </Box>
-            );
-          })}
+          <Box flexDirection="row" width={pairW}>
+            {viewMode === "preview" ? null : renderEditorPane(pairSrcW, lines,
+              { cursor, sel, edTop, edLeft, focusEd: focus === "editor", showFind: true,
+                title: {name: tabBaseOf(curFile), dirty: lines.join("\n") !== baseline} })}
+            {viewMode === "source" ? null : renderPreviewPane(pairPreviewW)}
+          </Box>
         </Box>
       )}
       {term && !overlay ? (
@@ -2839,7 +2819,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
           ))}
         </Box>
       ) : null}
-      <Box>
+      <Box height={1} flexShrink={0}>
+        <Text wrap="truncate">
         {menuSel ? (
           <Text bold wrap="truncate">{t("hint.menu")}</Text>
         ) : leader ? (
@@ -2855,6 +2836,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         )}
         {!overlay && !term ? <Text dimColor wrap="truncate"> · {mathPending?t('math.pending'):`${mathCurrent?.engine??mathEngine} E${mathCurrent?.diagnostics.filter(d=>d.severity==='error').length??0} W${mathCurrent?.diagnostics.filter(d=>d.severity==='warning').length??0} ?${mathCurrent?.diagnostics.filter(d=>d.severity==='info').length??0}`}</Text>:null}
         {msg ? <Text> — {msg}</Text> : null}
+        </Text>
       </Box>
     </Box>
   );

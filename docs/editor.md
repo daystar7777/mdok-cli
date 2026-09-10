@@ -6,13 +6,13 @@
 
 - A **tab** (`TabSnap`) is a file: `path`, `lines`, `baseline` (last saved),
   `cursor`, `sel`, scroll offsets, `answer`.
-- **Pairs** are views, not data: every open tab is always visible side by side
-  (tab bar switches *focus*, never hides). `openTab(path)` focuses the existing
-  tab for that path, else appends (refuses below ~30 cols/pair with a message).
+- Only the selected tab is rendered, using the entire document area. Split
+  displays its source and preview, never another file. Name tabs switch the
+  selected document; `[<]` / `[>]` navigate overflow names on narrow screens.
+  `openTab(path)` selects an existing tab or appends, without dividing pane width.
+  Explore replaces the selected document with Save/Discard/Cancel protection.
 - The active tab's content lives in granular states; `writeBack()` semantics
   are inline in `switchTab`/`openTab`/`closeTabAt` (snapshot current → store).
-- Same file in two pairs: allowed explicitly (renders alias the live buffer for
-  the active path). Dirty tracking is per path content, so both views agree.
 - `closeTabAt(i)`: dirty ⇒ arm/confirm (shared `quitArmed`), min 1 tab.
   `needSaved`-style blocking was removed — opening never destroys data.
 
@@ -62,9 +62,9 @@
 
 ## 7. View modes & layout
 
-- Global `split | source | preview` cycles (`^O v`); per-pair source panes
-  carry a title row (`name ● … [X]`, X closes that pair).
-- Sidebar (Recent/Outline/Cwd + git badges), tab bar (`[1 name●] … [+]`),
+- Global `split | source | preview` cycles (`^O v`); the selected source pane
+  carries a title row (`name ● … [X]`, X closes the selected tab).
+- Sidebar (Recent/Outline/Cwd + git badges), name tab bar (`[1 name●] …`),
   bottom shell-output panel, status bar (word count, vim mode, git, hints).
 
 ## Open questions (reviewers)
