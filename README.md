@@ -1,5 +1,9 @@
 # mdok — Markdown OK
 
+Since 0.1.6, TUI starts in **View**. Press **Enter** in the document to enter split editing (source + preview). Enter still inserts a newline while editing; menus and input fields keep their normal Enter behavior.
+
+0.1.6 adds optional VS Code/Pandoc integration and explicit [Markdown compatibility](docs/markdown-compatibility.md). TUI does not typeset LaTeX; Pandoc conversion requires separately installed tools. Real conversion fidelity remains unverified.
+
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 > Design docs for peer review: [`docs/`](docs/) (architecture, editor, sync, LLM, roadmap).

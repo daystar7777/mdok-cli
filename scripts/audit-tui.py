@@ -6,7 +6,7 @@ fixture = str(Path(__file__).with_name('audit-tui-fixture.mjs').resolve())
 ansi = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 results = []
 
-def run(name, actions, verify, mode='plain', width=120, lang=None, override=None):
+def run(name, actions, verify, mode='plain', width=120, lang=None, override=None, start_edit=True):
     if len(sys.argv)>1 and sys.argv[1] not in name: return
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH',30,width,0,0))
@@ -29,9 +29,14 @@ def run(name, actions, verify, mode='plain', width=120, lang=None, override=None
     try:
         initial=drain(0.5)
         for _ in range(10):
-            if '[Split]' in initial or '[분할]' in initial: break
+            if '[View]' in initial or '[보기]' in initial: break
             initial+=drain(0.25)
-        check('[Split]' in initial or '[분할]' in initial,'TUI did not finish initial rendering')
+        check('[View]' in initial or '[보기]' in initial,'TUI did not start in viewer mode')
+        # Existing editor regressions now explicitly enter editing first.
+        if start_edit:
+            os.write(master,b'\r')
+            initial=drain(0.3)
+            check('[Split]' in initial or '[분할]' in initial,'Enter did not enter split editing')
         screens.append(initial)
         for action in actions:
             if isinstance(action,dict):
@@ -112,6 +117,14 @@ run('i18n settings switches Korean to English and persists',['\x0fc']+['\x1b[B']
 run('extra Korean File button mouse hitbox',['\x1b[<0;91;1M'],lambda d,s:check('저장' in s[-1] and 'HTML' in s[-1],'translated File button hitbox missed'),lang='ko')
 run('extra Korean active search status',['\x0f/','ALPHA','\r'],lambda d,s:check('찾기 "ALPHA"' in s[-1],'active search status is not translated'),lang='ko')
 run('extra shell mini field deletes whole emoji',['\x0f!','printf 👩‍💻','\x7f','AUDIT_MINI','\r',{'key':'','wait':0.4},'\x1b'],lambda d,s:check(any('AUDIT_MINI' in screen for screen in s[5:]) and not any('�' in screen for screen in s) and 'output:' not in s[-1],'mini field or shell output failed'))
+run('integration File menu exposes external tools',['\x0ff'],lambda d,s:check('VS Code' in s[-1] and 'Pandoc' in s[-1],'external tool entries missing'))
+run('integration Pandoc profile cycles',['\x0ff','9','1','1'],lambda d,s:check('commonmark' in s[-2] and 'pandoc' in s[-1] and 'MathML' in s[-1],'profile switch failed'))
+run('integration VS Code rejects dirty buffer',['X','\x0ff','8'],lambda d,s:check('Ctrl+S' in s[-1] and buffer(d).startswith('XALPHA') and d['a'].startswith('ALPHA'),'dirty buffer guard failed'))
+run('viewer default rejects text input',['X','\x13'],lambda d,s:check('[View]' in s[0] and 'Enter edit' in s[0] and d['a'].startswith('ALPHA') and buffer(d).startswith('ALPHA'),'default viewer allowed editing'),start_edit=False)
+run('viewer Enter enters split without newline',['\r','X','\x13'],lambda d,s:check('[Split]' in s[1] and d['a'].startswith('XALPHA'),'Enter inserted text or failed to focus editor'),start_edit=False)
+run('viewer second Enter inserts newline',['\r','\r','\x13'],lambda d,s:check(d['a'].startswith('\nALPHA'),'editing Enter did not insert newline'),start_edit=False)
+run('viewer Korean Enter hint',['\r'],lambda d,s:check('Enter 편집' in s[0] and '[분할]' in s[1] and d['a'].startswith('ALPHA'),'Korean viewer transition failed'),lang='ko',start_edit=False)
+run('viewer file menu Enter does not enter editor',['\x0ff','\r'],lambda d,s:check(not any('[Split]' in screen for screen in s) and d['a'].startswith('ALPHA'),'menu Enter leaked into edit mode'),start_edit=False)
 for mode,cluster in [('zwj','👩‍💻'),('nfd','한')]:
     run('grapheme '+mode+' backspace',['\x1b[C','\x7f','\x13'],lambda d,s:check(d['a']=='ABC','cluster backspace corrupted text: '+repr(d['a'])),mode=mode)
     run('grapheme '+mode+' delete',['\x1b[3~','\x13'],lambda d,s:check(d['a']=='ABC','cluster delete corrupted text: '+repr(d['a'])),mode=mode)

@@ -1,5 +1,9 @@
 # mdok design docs — review guide
 
+Markdown dialects, math limitations and optional external tools: [Compatibility](markdown-compatibility.md).
+
+> **최신 통합 설계 (2026-09-11): [제품 명세·설계 v0.1](product-design-2026-09-11.md)** — 개발 순서, 리더 GUI, 다국어, AI/TTS, QR 수신, E2EE 공유와 단계별 검증을 통합. 아래 문서의 과거 결정과 충돌하면 최신 통합 설계를 우선한다.
+
 > 최신 제품 범위와 개발 순서: [제품 개발 기준](product-plan.md). GUI, 다국어, 번역/요약, 후속 문서별 열람 권한을 포함한다.
 
 > 2026-09-10: 새 [전체 코드 검토](review-2026-09-10.md)와 [웹·E2EE 실시간 협업 설계](web-service-design.md)를 추가했습니다. 새 설계는 사용자가 확정한 웹 편집·동기화·실시간 협업·E2EE 유지 요구사항을 반영합니다. 아래 기존 문서의 클라우드/협업 제외 방침과 달라진 부분은 새 설계를 우선 참조하세요. 구현 완료를 뜻하지 않습니다.

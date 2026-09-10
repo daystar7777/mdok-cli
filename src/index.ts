@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import { exportPandoc, PROFILES, FORMATS, type Profile, type ExportFormat } from './integrations.js';
 import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -47,7 +48,7 @@ program.configureHelp({
 program
   .name("mdok")
   .description(ct("cli.description"))
-  .version("0.1.5", "-V, --version", ct("cli.versionHelp"));
+  .version("0.1.6", "-V, --version", ct("cli.versionHelp"));
 
 program
   .command("view")
@@ -162,6 +163,23 @@ program
       console.error(chalk.red(ct("cli.exportFailed", { e: (err as Error).message })));
       process.exitCode = 1;
     }
+  });
+
+program.command('convert')
+  .argument('<file>', ct('cli.fileArg'))
+  .requiredOption('-o, --out <out>', ct('cli.outHelp'))
+  .option('--profile <profile>', 'gfm | commonmark | pandoc', 'gfm')
+  .option('--format <format>', 'docx | epub | latex | html | pdf', 'docx')
+  .option('--trusted', ct('integration.trustHelp'))
+  .description(ct('integration.pandoc'))
+  .action(async (file: string, opts: {out: string; profile: string; format: string; trusted?: boolean}) => {
+    try {
+      if (!opts.trusted) throw new Error(ct('integration.needTrust'));
+      if (!PROFILES.includes(opts.profile as Profile) || !FORMATS.includes(opts.format as ExportFormat)) throw new Error(ct('integration.badFormat'));
+      const md = await readFile(file, 'utf8');
+      await exportPandoc(md, file, opts.out, opts.profile as Profile, opts.format as ExportFormat);
+      console.log(ct('cli.wrote', { f: opts.out }));
+    } catch (e) { console.error(ct('cli.exportFailed', { e: (e as Error).message })); process.exitCode = 1; }
   });
 
 // Default: TUI. `mdok <file>` opens only the requested file;

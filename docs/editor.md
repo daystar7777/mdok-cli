@@ -1,5 +1,7 @@
 # Editor
 
+> Current development behavior: the TUI starts in `preview` with preview focus. Enter in the document enters `split` with editor focus (Vim insert mode) without inserting a newline. Subsequent Enter in the editor inserts a newline. Overlay/menu/sidebar Enter retains its own action. `Ctrl+O, v` still cycles split/source/preview. Older implementation descriptions below may predate subsequent fixes.
+
 ## 1. Buffer / tab / pair model
 
 - A **tab** (`TabSnap`) is a file: `path`, `lines`, `baseline` (last saved),

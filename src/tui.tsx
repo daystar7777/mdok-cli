@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import chalk from "chalk";
 import { qrInputAction } from "./qr-input.js";
 import { paneWidths } from "./layout.js";
+import { exportPandoc, openVsCode, PROFILES, FORMATS, type Profile } from "./integrations.js";
 import { Box, Text, useApp, useInput, useWindowSize, type Key } from "ink";
 import { readFile, readdir } from "node:fs/promises";
 import { writeFileAtomic } from "./atomic.js";
@@ -29,7 +30,7 @@ import {
 
 type Focus = "editor" | "preview" | "side";
 type ViewMode = "split" | "source" | "preview";
-type OverlayKind = "file" | "open" | "ask" | "find" | "run" | "lint" | "diff" | "sync" | "settings" | "help" | "qr";
+type OverlayKind = "file" | "pandoc" | "open" | "ask" | "find" | "run" | "lint" | "diff" | "sync" | "settings" | "help" | "qr";
 
 interface BtnSpan {
   id: string;
@@ -297,7 +298,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const [edTop, setEdTop] = useState(0);
   const [edLeft, setEdLeft] = useState(0);
   const [pvTop, setPvTop] = useState(0);
-  const [focus, setFocus] = useState<Focus>("editor");
+  const [focus, setFocus] = useState<Focus>("preview");
   const [msg, setMsg] = useState("");
   const [quitArmed, setQuitArmed] = useState(false);
   const closeArmed = useRef<{ path: string; content: string } | null>(null);
@@ -307,7 +308,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const currentFileRef = useRef(curFile);
   currentFileRef.current = curFile;
   const saveQueue = useRef(new Map<string, Promise<void>>());
-  const [viewMode, setViewMode] = useState<ViewMode>("split");
+  const [viewMode, setViewMode] = useState<ViewMode>("preview");
   const [overlay, setOverlay] = useState<OverlayKind | null>(null);
   const [qr, setQr] = useState<QrTransfer | null>(null);
   const [qrPage, setQrPage] = useState(0);
@@ -319,6 +320,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   }, [overlay, qrPlaying, qr]);
   const qrRows = useMemo(() => qr ? qrTerminalRows(qr.frames[qrPage], qr.version) : [], [qr, qrPage]);
   const [menuIdx, setMenuIdx] = useState(0);
+  const [exportProfile, setExportProfile] = useState<Profile>('gfm');
+  const integrationBusy = useRef(false);
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [askEdit, setAskEdit] = useState<MiniEdit>({ value: "", cur: 0 });
   const [findEdit, setFindEdit] = useState<MiniEdit>({ value: "", cur: 0 });
@@ -1052,7 +1055,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     const order: ViewMode[] = ["split", "source", "preview"];
     const next = order[(order.indexOf(viewMode) + 1) % order.length];
     setViewMode(next);
-    if (next === "source") setFocus("editor");
+    if (next === "source" || next === "split") setFocus("editor");
     else if (next === "preview") setFocus("preview");
   };
   const cycleFocus = () => {
@@ -1240,6 +1243,21 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     }
   };
   const activateMenuIndex = (idx: number) => {
+    if (overlay === 'pandoc') {
+      if (integrationBusy.current) return;
+      if (idx === 0) { setExportProfile(p => PROFILES[(PROFILES.indexOf(p) + 1) % PROFILES.length]); return; }
+      const format = FORMATS[idx - 1];
+      if (!format) return;
+      const out = curFile.replace(/\.(md|markdown)$/i, '') + '.export.' + (format === 'latex' ? 'tex' : format);
+      integrationBusy.current = true;
+      setOverlay(null);
+      setMsg(t('integration.running'));
+      void exportPandoc(lines.join('\n'), curFile, out, exportProfile, format)
+        .then(() => setMsg(t('msg.wrote', { f: out })))
+        .catch((e: Error) => setMsg(t('msg.exportFailed', { e: e.message })))
+        .finally(() => { integrationBusy.current = false; });
+      return;
+    }
     if (overlay === "file") {
       if (idx === 0) saveNow();
       else if (idx === 1) newFile();
@@ -1248,6 +1266,14 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       else if (idx === 4) void exportHtml();
       else if (idx === 5) closeTab();
       else if (idx === 6) void openOverlayKind("qr");
+      else if (idx === 7) {
+        if (lines.join('\n') !== baseline) { setMsg(t('integration.saveFirst')); return; }
+        setOverlay(null);
+        void openVsCode(curFile, cursor.r, cursor.c)
+          .then(() => setMsg(t('integration.opened')))
+          .catch((e: Error) => setMsg(t('msg.exportFailed', { e: e.message })));
+      }
+      else if (idx === 8) void openOverlayKind('pandoc');
     } else if (overlay === "open") {
       const name = openFiles[idx];
       if (name) void switchToFile(join(process.cwd(), name));
@@ -1478,7 +1504,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         if (pressed && btn === 0 && !(cb & 32)) setOverlay(null);
         return;
       }
-      if ((g.overlay === "file" || g.overlay === "open" || g.overlay === "lint") && pressed && btn === 0 && !(cb & 32)) {
+      if ((g.overlay === "file" || g.overlay === "pandoc" || g.overlay === "open" || g.overlay === "lint") && pressed && btn === 0 && !(cb & 32)) {
         const geom = overlayGeomRef.current;
         if (geom && y >= geom.top + 2 && y < geom.top + 2 + geom.count && x >= geom.left && x < geom.left + geom.width) {
           actionsRef.current.activateMenuIndex(y - (geom.top + 2));
@@ -1740,11 +1766,12 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         setOverlay(null);
         return;
       }
-      if (overlay === "file") {
-        if (key.upArrow) setMenuIdx((i) => (i + 6) % 7);
-        else if (key.downArrow) setMenuIdx((i) => (i + 1) % 7);
+      if (overlay === "file" || overlay === 'pandoc') {
+        const count = overlay === 'file' ? 9 : 6;
+        if (key.upArrow) setMenuIdx((i) => (i + count - 1) % count);
+        else if (key.downArrow) setMenuIdx((i) => (i + 1) % count);
         else if (key.return) activateMenuIndex(menuIdx);
-        else if (input >= "1" && input <= "7") activateMenuIndex(parseInt(input, 10) - 1);
+        else if (/^[1-9]$/.test(input) && Number(input) <= count) activateMenuIndex(Number(input) - 1);
         return;
       }
       if (overlay === "open") {
@@ -1978,6 +2005,12 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     }
 
     if (focus === "preview" || viewMode === "preview") {
+      if (key.return && !key.ctrl && !key.meta && !key.shift) {
+        setViewMode("split");
+        setFocus("editor");
+        setVimInsert(true);
+        return; // Switch only: this Enter must not insert a newline.
+      }
       if (key.upArrow || key.downArrow || key.pageUp || key.pageDown) pvFollow.current = false;
       if (key.upArrow) setPvTop((t) => clamp(t - 1, 0, maxPvTop));
       else if (key.downArrow) setPvTop((t) => clamp(t + 1, 0, maxPvTop));
@@ -2269,8 +2302,12 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   };
 
   const renderOverlay = () => {
+    if (overlay === 'pandoc') {
+      const items = [`${t('integration.profile')}: ${exportProfile}`, 'DOCX', 'EPUB', 'LaTeX (.tex)', 'HTML (MathML)', t('integration.pdf')];
+      return centerBox('Pandoc', items.map((label, i) => <Text key={i} inverse={i === menuIdx}>{i === menuIdx ? '>' : ' '} {i + 1} {label}</Text>), t('integration.trusted'), items.length);
+    }
     if (overlay === "file") {
-      const items = [t("menu.save"), t("menu.new"), t("menu.open"), t("menu.run"), t("menu.export"), t("menu.closeTab"), t("menu.qr")];
+      const items = [t("menu.save"), t("menu.new"), t("menu.open"), t("menu.run"), t("menu.export"), t("menu.closeTab"), t("menu.qr"), t('integration.vscode'), t('integration.pandoc')];
       return centerBox(
         t("btn.file"),
         items.map((t, i) => (
@@ -2662,7 +2699,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         ) : find && findMatches.length ? (
           <Text dimColor wrap="truncate">{t("hint.findActive", { p: find.pattern, i: curFindIdx + 1, n: findMatches.length })}{asking ? t("hint.asking") : ""}</Text>
         ) : (
-          <Text dimColor wrap="truncate">{t("hint.default")} · {stats.words}w{vimOn ? (vimInsert ? ` · ${t("status.insert")}` : ` · ${t("status.normal")}`) : ""}{gitSt ? ` · git:${gitSt.branch}${gitSt.ahead ? `⇡${gitSt.ahead}` : ""}${gitSt.behind ? `⇣${gitSt.behind}` : ""}${gitSt.conflict ? " !conflict" : ""}` : ""}{asking ? t("hint.asking") : ""}</Text>
+          <Text dimColor wrap="truncate">{t(viewMode === "preview" ? "hint.viewer" : "hint.default")} · {stats.words}w{vimOn ? (vimInsert ? ` · ${t("status.insert")}` : ` · ${t("status.normal")}`) : ""}{gitSt ? ` · git:${gitSt.branch}${gitSt.ahead ? `⇡${gitSt.ahead}` : ""}${gitSt.behind ? `⇣${gitSt.behind}` : ""}${gitSt.conflict ? " !conflict" : ""}` : ""}{asking ? t("hint.asking") : ""}</Text>
         )}
         {msg ? <Text> — {msg}</Text> : null}
       </Box>
