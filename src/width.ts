@@ -5,6 +5,8 @@ export function* graphemes(s: string): Generator<string> {
 
 /** Display width of a grapheme: common emoji clusters occupy two cells. */
 export function charWidth(ch: string): number {
+  const normalized = ch.normalize("NFC");
+  if (normalized !== ch) return charWidth(normalized);
   if (/\p{Emoji_Presentation}/u.test(ch) || (/\p{Extended_Pictographic}/u.test(ch) && /[\u200d\ufe0f]/u.test(ch)) || /[0-9#*]\ufe0f?\u20e3/u.test(ch)) return 2;
   if (Array.from(ch).length > 1) {
     return Array.from(ch).reduce((width, cp) => width + charWidth(cp), 0);
@@ -49,6 +51,25 @@ export function charWidth(ch: string): number {
     return 2;
   }
   return 1;
+}
+
+export function previousBoundary(s: string, index: number): number {
+  let offset = 0;
+  for (const ch of graphemes(s)) {
+    const end = offset + ch.length;
+    if (end >= index) return offset;
+    offset = end;
+  }
+  return offset;
+}
+
+export function nextBoundary(s: string, index: number): number {
+  let offset = 0;
+  for (const ch of graphemes(s)) {
+    offset += ch.length;
+    if (offset > index) return offset;
+  }
+  return s.length;
 }
 
 /** Display width of a string (counts UTF-16 surrogate pairs once). */

@@ -50,7 +50,7 @@ mdok config --key sk-... --theme ocean --git on --lang ko
 
 ## 语言和主题
 
-- UI 语言:简体中文 / English / 한국어。在设置中切换 (`^O c` → language)、
+- UI 语言:English / 한국어 (简体中文仅提供文档)。在设置中切换 (`^O c` → language)、
   `mdok config --lang ko` 或 `MDOK_LANG=ko`。适用于 TUI 和 CLI 消息。
 - 主题:`forest · ocean · sunset · mono · rose`,按 `^O t` 循环 (会记住)。
   可通过 `~/.mdok-themes.json` 自定义:

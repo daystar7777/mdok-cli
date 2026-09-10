@@ -51,7 +51,7 @@ mdok config --key sk-... --theme ocean --git on --lang ko
 
 ## 言語 & テーマ
 
-- UI 言語: 日本語 / English / 한국어。設定で切替 (`^O c` → language)、
+- UI 言語: English / 한국어 (日本語はドキュメントのみ)。設定で切替 (`^O c` → language)、
   `mdok config --lang ko`、または `MDOK_LANG=ko`。TUI と CLI メッセージに適用。
 - テーマ: `forest · ocean · sunset · mono · rose`、`^O t` で循環 (記憶される)。
   `~/.mdok-themes.json` で自作も可能:

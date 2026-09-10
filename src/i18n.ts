@@ -1,6 +1,28 @@
 export type Lang = "ko" | "en";
 
 const en = {
+  "cli.description": "Markdown OK — pretty CLI viewer + LLM analysis (BYOK)",
+  "cli.fileArg": "Markdown file",
+  "cli.viewHelp": "Pretty-print a Markdown file in the terminal",
+  "cli.askHelp": "Ask an LLM about a Markdown file (BYOK)",
+  "cli.configHelp": "Show or update mdok config (~/.mdok.json)",
+  "cli.lintHelp": "Check whitespace, headings and code fences",
+  "cli.exportHelp": "Export a Markdown file to standalone HTML",
+  "cli.questionHelp": "question about the file",
+  "cli.modelHelp": "model name",
+  "cli.keyHelp": "set API key",
+  "cli.urlHelp": "set OpenAI-compatible base URL",
+  "cli.themeHelp": "TUI theme (forest|ocean|sunset|mono|rose)",
+  "cli.langHelp": "UI language (Korean / English)",
+  "cli.gitHelp": "Git sync on/off",
+  "cli.outHelp": "output HTML path",
+  "cli.helpHelp": "display help",
+  "cli.versionHelp": "display version",
+  "cli.badLang": "Unsupported UI language: {lang}. Use ko or en.",
+  "lint.trail": "trailing whitespace",
+  "lint.blanks": "more than one blank line",
+  "lint.fence": "unclosed code fence",
+  "lint.heading": "heading jumped H{from} → H{to}",
   "menu.qr": "Show file as QR (^O r)",
   "qr.title": "QR",
   "qr.note": "Buffer snapshot · compressed, NOT encrypted",
@@ -188,6 +210,28 @@ const en = {
 export type MsgKey = keyof typeof en;
 
 const ko: Record<MsgKey, string> = {
+  "cli.description": "Markdown OK — 터미널 Markdown 뷰어 및 LLM 분석 (개인 API 키)",
+  "cli.fileArg": "Markdown 파일",
+  "cli.viewHelp": "터미널에서 Markdown 파일 보기",
+  "cli.askHelp": "Markdown 파일에 관해 LLM에 질문 (개인 API 키)",
+  "cli.configHelp": "mdok 설정 보기 또는 변경 (~/.mdok.json)",
+  "cli.lintHelp": "공백·제목·코드블록 검사",
+  "cli.exportHelp": "Markdown 파일을 HTML로 내보내기",
+  "cli.questionHelp": "파일에 관한 질문",
+  "cli.modelHelp": "모델 이름",
+  "cli.keyHelp": "API 키 설정",
+  "cli.urlHelp": "OpenAI 호환 API 기본 주소 설정",
+  "cli.themeHelp": "TUI 테마 (forest|ocean|sunset|mono|rose)",
+  "cli.langHelp": "UI 언어 (한국어 / 영어)",
+  "cli.gitHelp": "Git 동기화 켜기/끄기",
+  "cli.outHelp": "출력 HTML 경로",
+  "cli.helpHelp": "도움말 표시",
+  "cli.versionHelp": "버전 표시",
+  "cli.badLang": "지원하지 않는 UI 언어: {lang}. ko 또는 en을 사용하세요.",
+  "lint.trail": "줄 끝 공백",
+  "lint.blanks": "연속된 빈 줄",
+  "lint.fence": "닫히지 않은 코드블록",
+  "lint.heading": "제목 단계가 H{from}에서 H{to}로 건너뜀",
   "menu.qr": "파일 QR 표시 (^O r)",
   "qr.title": "QR",
   "qr.note": "현재 버퍼 사본 · 압축됨, 암호화 아님",
@@ -357,7 +401,7 @@ const ko: Record<MsgKey, string> = {
 };
 
 export function normalizeLang(v: unknown): Lang {
-  return v === "ko" ? "ko" : "en";
+  return typeof v === "string" && /^ko(?:[-_.]|$)/i.test(v.trim()) ? "ko" : "en";
 }
 
 export function tr(lang: string, key: MsgKey, vars?: Record<string, string | number>): string {

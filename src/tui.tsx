@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import chalk from "chalk";
 import { qrInputAction } from "./qr-input.js";
+import { paneWidths } from "./layout.js";
 import { Box, Text, useApp, useInput, useWindowSize, type Key } from "ink";
 import { readFile, readdir } from "node:fs/promises";
 import { writeFileAtomic } from "./atomic.js";
@@ -9,7 +10,7 @@ import { relative } from "node:path";
 import { lintMarkdown, formatMd, formatTable, diffLines, type LintProblem } from "./lint.js";
 import { BUILTIN_THEMES, loadThemes, themeByName, type TuiTheme } from "./theme.js";
 import { tr, normalizeLang, type Lang, type MsgKey } from "./i18n.js";
-import { charWidth, strWidth, sliceByWidth, colOfIndex, indexOfCol, graphemes } from "./width.js";
+import { charWidth, strWidth, sliceByWidth, colOfIndex, indexOfCol, graphemes, previousBoundary, nextBoundary } from "./width.js";
 import { markdownToHtml } from "./html.js";
 import { gitStatus, gitRoot, gitSyncState, gitCommitAll, gitCommitFile, gitPullRebase, gitPush, type GitSyncState } from "./git.js";
 import { exec } from "node:child_process";
@@ -299,9 +300,13 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const [focus, setFocus] = useState<Focus>("editor");
   const [msg, setMsg] = useState("");
   const [quitArmed, setQuitArmed] = useState(false);
+  const closeArmed = useRef<{ path: string; content: string } | null>(null);
   const [leader, setLeader] = useState(false);
   const [previewSrc, setPreviewSrc] = useState(firstTab.content);
   const [curFile, setCurFile] = useState(firstTab.path);
+  const currentFileRef = useRef(curFile);
+  currentFileRef.current = curFile;
+  const saveQueue = useRef(new Map<string, Promise<void>>());
   const [viewMode, setViewMode] = useState<ViewMode>("split");
   const [overlay, setOverlay] = useState<OverlayKind | null>(null);
   const [qr, setQr] = useState<QrTransfer | null>(null);
@@ -339,7 +344,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     cursor: Cursor;
   }
   const undoStacks = useRef(new Map<string, { u: UndoSnap[]; r: UndoSnap[] }>());
-  const lastPush = useRef<{ at: number; kind: string } | null>(null);
+  const lastPush = useRef<{ at: number; kind: string; path: string } | null>(null);
   const stackFor = (path: string) => {
     let st = undoStacks.current.get(path);
     if (!st) {
@@ -352,8 +357,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     const now = Date.now();
     const last = lastPush.current;
     // coalesce rapid typing into one undo step
-    if (kind === "type" && last && last.kind === "type" && now - last.at < 1200) return;
-    lastPush.current = { at: now, kind };
+    if (kind === "type" && last && last.path === curFile && last.kind === "type" && now - last.at < 1200) return;
+    lastPush.current = { at: now, kind, path: curFile };
     const st = stackFor(curFile);
     st.u.push({ lines: [...prev.lines], cursor: { ...prev.cursor } });
     if (st.u.length > 100) st.u.shift();
@@ -438,7 +443,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const mainW = cols - (sideOpen ? sideW : 0);
   const ox = sideOpen ? sideW : 0;
   const pairW = Math.max(1, Math.floor(mainW / Math.max(1, tabs.length)));
-  const pairSrcW = viewMode === "split" ? Math.max(24, Math.floor(pairW / 2)) : pairW;
+  const { source: pairSrcW, preview: pairPreviewW } = paneWidths(pairW, viewMode);
   // Bottom output panel reserves rows when a command ran
   const outH = term ? Math.min(12, Math.max(6, rowsSafe - 12)) : 0;
   const outInnerH = Math.max(1, outH - 2);
@@ -554,16 +559,21 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const saveNow = () => {
     const content = lines.join("\n");
     const target = curFile;
-    writeFileAtomic(target, content)
+    const pending = (saveQueue.current.get(target) ?? Promise.resolve())
+      .catch(() => {}).then(() => writeFileAtomic(target, content));
+    saveQueue.current.set(target, pending);
+    pending
       .then(() => {
-        setBaseline(content);
+        setTabs(ts => ts.map(tab => tab.path === target ? { ...tab, baseline: content } : tab));
+        if (currentFileRef.current === target) setBaseline(content);
         setMsg(t("msg.saved", { f: target }));
         setQuitArmed(false);
         void refreshSideFiles();
         scheduleGitCommit(target, gitRootPath, gitSyncOn);
         void refreshGit();
       })
-      .catch((err: Error) => setMsg(t("msg.saveFailed", { e: err.message })));
+      .catch((err: Error) => setMsg(t("msg.saveFailed", { e: err.message })))
+      .finally(() => { if (saveQueue.current.get(target) === pending) saveQueue.current.delete(target); });
   };
   const anyDirty = (): boolean =>
     lines.join("\n") !== baseline ||
@@ -609,6 +619,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     answer,
   });
   const restoreTab = (t: TabSnap) => {
+    lastPush.current = null;
     setCurFile(t.path);
     setLines(t.lines);
     setBaseline(t.baseline);
@@ -678,12 +689,14 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     if (!target) return;
     const isDirty =
       i === active ? lines.join("\n") !== baseline : target.lines.join("\n") !== target.baseline;
-    if (isDirty && !quitArmed) {
-      setQuitArmed(true);
+    const targetContent = (i === active ? lines : target.lines).join("\n");
+    if (isDirty && (closeArmed.current?.path !== target.path || closeArmed.current.content !== targetContent)) {
+      closeArmed.current = { path: target.path, content: targetContent };
       setMsg(t("msg.closeConfirm"));
       return;
     }
     setQuitArmed(false);
+    closeArmed.current = null;
     const snap = snapshotTab();
     const next = tabs.map((x, xi) => (xi === active ? snap : x)).filter((_, xi) => xi !== i);
     const ni = i < active ? active - 1 : Math.min(active, next.length - 1);
@@ -741,10 +754,10 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     uiOpenedAt.current = Date.now();
     if (kind === "ask") setAskEdit({ value: "", cur: 0 });
     if (kind === "lint") {
-      setProblems(lintMarkdown(lines));
+      setProblems(lintMarkdown(lines, lang));
       setMenuIdx(0);
       setOverlay("lint");
-      if (!lintMarkdown(lines).length) setMsg(t("msg.lintClean"));
+      if (!lintMarkdown(lines, lang).length) setMsg(t("msg.lintClean"));
     }
     if (kind === "run") {
       const last = cmdHist[cmdHist.length - 1] ?? "";
@@ -897,7 +910,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   // Restore last theme + recent files (persisted in ~/.mdok.json)
   useEffect(() => {
     void loadConfig().then((cfg) => {
-      setLang(normalizeLang(cfg.lang));
+      setLang(normalizeLang(process.env.MDOK_LANG || cfg.lang));
       void loadThemes().then((list) => {
         setAllThemes(list);
         if (list.some((x) => x.name === cfg.theme)) setThemeName(cfg.theme);
@@ -1043,7 +1056,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     else if (next === "preview") setFocus("preview");
   };
   const cycleFocus = () => {
-    const order: Focus[] = sideOpen ? ["editor", "preview", "side"] : ["editor", "preview"];
+    const order: Focus[] = [...(viewMode === "preview" ? [] : ["editor" as const]), ...(viewMode === "source" ? [] : ["preview" as const]), ...(sideOpen ? ["side" as const] : [])];
     setFocus((f) => order[(order.indexOf(f) + 1) % order.length]);
   };
   const jumpToMatch = (matches: FindMatch[], idx: number) => {
@@ -1062,7 +1075,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     jumpToMatch(matches, idx);
   };
   const runLint = () => {
-    const found = lintMarkdown(lines);
+    const found = lintMarkdown(lines, lang);
     setProblems(found);
     setMenuIdx(0);
     setOverlay("lint");
@@ -1083,6 +1096,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       setMsg(t("msg.formatClean"));
       return;
     }
+    pushUndo({ lines, cursor }, "format");
     setLines(next);
     setCursor((c) => ({
       r: Math.min(c.r, Math.max(0, next.length - 1)),
@@ -1096,6 +1110,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       setMsg(t("msg.noTable"));
       return;
     }
+    pushUndo({ lines, cursor }, "format");
     setLines(next);
     setMsg(t("msg.tableOk"));
   };
@@ -1247,18 +1262,18 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     k: Key,
     onEnter: () => void,
   ) => {
-    if (k.leftArrow) setter({ ...cur, cur: clamp(cur.cur - 1, 0, cur.value.length) });
-    else if (k.rightArrow) setter({ ...cur, cur: clamp(cur.cur + 1, 0, cur.value.length) });
+    if (k.leftArrow) setter({ ...cur, cur: previousBoundary(cur.value, cur.cur) });
+    else if (k.rightArrow) setter({ ...cur, cur: nextBoundary(cur.value, cur.cur) });
     else if (k.home || (k.ctrl && ch === "a")) setter({ ...cur, cur: 0 });
     else if (k.end || (k.ctrl && ch === "e")) setter({ ...cur, cur: cur.value.length });
     else if (k.backspace && cur.cur > 0) {
       setter({
-        value: cur.value.slice(0, cur.cur - 1) + cur.value.slice(cur.cur),
-        cur: cur.cur - 1,
+        value: cur.value.slice(0, previousBoundary(cur.value, cur.cur)) + cur.value.slice(cur.cur),
+        cur: previousBoundary(cur.value, cur.cur),
       });
     } else if (k.delete && cur.cur < cur.value.length) {
       setter({
-        value: cur.value.slice(0, cur.cur) + cur.value.slice(cur.cur + 1),
+        value: cur.value.slice(0, cur.cur) + cur.value.slice(nextBoundary(cur.value, cur.cur)),
         cur: cur.cur,
       });
     } else if (k.return) onEnter();
@@ -1341,6 +1356,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         lastExtChange.current = now;
         try {
           const disk = await readFile(curFile, "utf-8");
+          if (dead || currentFileRef.current !== curFile) return;
           if (disk === linesRef.current.join("\n")) return; // our own save
           if (linesRef.current.join("\n") === baselineRef.current) {
             setLines(disk.split("\n"));
@@ -1646,6 +1662,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     // Lone Esc opens a short suppression window (split-chunk mouse cover),
     // but never when Esc is a real key: menu/overlay close, leader cancel.
     if (key.escape && !leader && !overlay && !menuSel) {
+      if (term) { closeTerm(); return; }
       if (vimOn && vimInsert && focus === "editor") {
         setVimInsert(false);
         return;
@@ -1960,7 +1977,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       return;
     }
 
-    if (focus === "preview") {
+    if (focus === "preview" || viewMode === "preview") {
       if (key.upArrow || key.downArrow || key.pageUp || key.pageDown) pvFollow.current = false;
       if (key.upArrow) setPvTop((t) => clamp(t - 1, 0, maxPvTop));
       else if (key.downArrow) setPvTop((t) => clamp(t + 1, 0, maxPvTop));
@@ -2003,10 +2020,10 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         setQuitArmed(false);
       };
       const ln0 = L[C.r] ?? "";
-      if (key.leftArrow || input === "h") go(C.r, C.c - 1);
+      if (key.leftArrow || input === "h") go(C.r, previousBoundary(ln0, C.c));
       else if (key.downArrow || input === "j") go(C.r + 1, C.c);
       else if (key.upArrow || input === "k") go(C.r - 1, C.c);
-      else if (key.rightArrow || input === "l") go(C.r, C.c + 1);
+      else if (key.rightArrow || input === "l") go(C.r, nextBoundary(ln0, C.c));
       else if (input === "0") go(C.r, 0);
       else if (input === "$") go(C.r, ln0.length);
       else if (input === "G") go(L.length - 1, 0);
@@ -2014,7 +2031,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         setVimInsert(true);
         setSel(null);
       } else if (input === "a") {
-        setCursor({ r: C.r, c: Math.min(C.c + 1, ln0.length) });
+        setCursor({ r: C.r, c: nextBoundary(ln0, C.c) });
         setVimInsert(true);
         setSel(null);
       } else if (input === "A") {
@@ -2040,7 +2057,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         const l2 = lcl[ccl.r] ?? "";
         if (ccl.c < l2.length) {
           const nx = [...lcl];
-          nx[ccl.r] = l2.slice(0, ccl.c) + l2.slice(ccl.c + 1);
+          nx[ccl.r] = l2.slice(0, ccl.c) + l2.slice(nextBoundary(l2, ccl.c));
           setLines(nx);
         }
         setCursor(ccl);
@@ -2058,8 +2075,12 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     }
     const line = L[C.r] ?? "";
     const snapTrail = (ln: string, c: number): number => {
-      const cu = ln.charCodeAt(c);
-      return cu >= 0xdc00 && cu <= 0xdfff && c < ln.length ? c + 1 : c;
+      let offset = 0;
+      for (const ch of graphemes(ln)) {
+        if (offset + ch.length > c) return offset;
+        offset += ch.length;
+      }
+      return ln.length;
     };
     const navTo = (np: Cursor) => {
       const fixed = { r: np.r, c: snapTrail(L[np.r] ?? "", np.c) };
@@ -2073,12 +2094,12 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       const r = clamp(C.r + 1, 0, L.length - 1);
       navTo({ r, c: clamp(C.c, 0, (L[r] ?? "").length) });
     } else if (key.leftArrow) {
-      if (C.c > 0) navTo({ ...C, c: C.c - 1 });
+      if (C.c > 0) navTo({ ...C, c: previousBoundary(line, C.c) });
       else if (C.r > 0) {
         navTo({ r: C.r - 1, c: (L[C.r - 1] ?? "").length });
       }
     } else if (key.rightArrow) {
-      if (C.c < line.length) navTo({ ...C, c: C.c + 1 });
+      if (C.c < line.length) navTo({ ...C, c: nextBoundary(line, C.c) });
       else if (C.r < L.length - 1) navTo({ r: C.r + 1, c: 0 });
     } else if (key.return) {
       const next = [...L];
@@ -2089,9 +2110,10 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     } else if (key.backspace) {
       if (C.c > 0) {
         const next = [...L];
-        next[C.r] = line.slice(0, C.c - 1) + line.slice(C.c);
+        const previous = previousBoundary(line, C.c);
+        next[C.r] = line.slice(0, previous) + line.slice(C.c);
         setLines(next);
-        setCursor({ ...C, c: C.c - 1 });
+        setCursor({ ...C, c: previous });
       } else if (C.r > 0) {
         const prev = L[C.r - 1] ?? "";
         const next = [...L];
@@ -2103,7 +2125,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     } else if (key.delete) {
       if (C.c < line.length) {
         const next = [...L];
-        next[C.r] = line.slice(0, C.c) + line.slice(C.c + 1);
+        next[C.r] = line.slice(0, C.c) + line.slice(nextBoundary(line, C.c));
         setLines(next);
       } else if (C.r < L.length - 1) {
         const next = [...L];
@@ -2156,8 +2178,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     tabs.forEach((t, i) => {
       const isDirty = i === active ? lines.join("\n") !== baseline : t.lines.join("\n") !== t.baseline;
       const label = ` [${i + 1} ${tabBaseOf(t.path)}${isDirty ? "\u25cf" : ""}]`;
-      spans.push({ idx: i, x0: tx, x1: tx + label.length });
-      tx += label.length;
+      spans.push({ idx: i, x0: tx, x1: tx + strWidth(label) });
+      tx += strWidth(label);
     });
     spans.push({ idx: -1, x0: tx, x1: tx + 4 }); // " [+]"
     tabSpansRef.current = spans;
@@ -2179,23 +2201,31 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const viewBtnLabel = `[${viewMode === "split" ? t("btn.split") : viewMode === "source" ? t("btn.src") : t("btn.view")}]`;
   const menuBtn = "[>]"; // toggles the sidebar
   const fullRight: Array<[string, string]> = [["ask", t("btn.ask")], ["find", t("btn.find")], ["file", t("btn.file")], ["qr", "QR"], ["shell", t("btn.shell")], ["set", t("btn.set")], ["help", t("btn.help")], ["quit", t("btn.quit")]];
-  const leftFixed = menuBtn.length + 1 + 5 + viewBtnLabel.length + 1; // "[Menu] " + "mdok " + view + space
-  const fullRightWidth = fullRight.reduce((a, [, l]) => a + l.length + 3, 0);
+  const leftFixed = menuBtn.length + 1 + 5 + strWidth(viewBtnLabel) + 1;
+  const fullRightWidth = fullRight.reduce((a, [, l]) => a + strWidth(l) + 3, 0);
   const compact = cols < leftFixed + fullRightWidth + 14;
   const rightDefs: Array<[string, string]> = compact ? [["qr", "QR"], ["quit", "X"]] : fullRight;
-  const rightWidth = rightDefs.reduce((a, [, l]) => a + l.length + 3, 0);
+  const rightWidth = rightDefs.reduce((a, [, l]) => a + strWidth(l) + 3, 0);
   const fileMax = Math.max(6, cols - leftFixed - rightWidth - 2);
-  const shownFile = curFile.length > fileMax ? "…" + curFile.slice(-fileMax + 1) : curFile;
-  const padMid = Math.max(1, cols - (leftFixed + shownFile.length + (dirty ? 2 : 0)) - rightWidth);
+  let shownFile = curFile;
+  if (strWidth(curFile) > fileMax) {
+    let tail = "";
+    for (const g of [...graphemes(curFile)].reverse()) {
+      if (strWidth(g + tail) > fileMax - 1) break;
+      tail = g + tail;
+    }
+    shownFile = "…" + tail;
+  }
+  const padMid = Math.max(1, cols - (leftFixed + strWidth(shownFile) + (dirty ? 2 : 0)) - rightWidth);
   {
     const spans: BtnSpan[] = [
       { id: "menu", x0: 0, x1: menuBtn.length },
-      { id: "view", x0: menuBtn.length + 1 + 5, x1: menuBtn.length + 1 + 5 + viewBtnLabel.length },
+      { id: "view", x0: menuBtn.length + 1 + 5, x1: menuBtn.length + 1 + 5 + strWidth(viewBtnLabel) },
     ];
     let rx = cols - rightWidth;
     for (const [id, label] of rightDefs) {
-      spans.push({ id, x0: rx, x1: rx + label.length + 2 });
-      rx += label.length + 3;
+      spans.push({ id, x0: rx, x1: rx + strWidth(label) + 2 });
+      rx += strWidth(label) + 3;
     }
     btnSpansRef.current = spans;
     menuIdsRef.current = spans.map((s) => s.id).filter((id) => id !== "menu");
@@ -2205,8 +2235,9 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
 
   const renderMiniCursor = (edit: MiniEdit) => {
     const before = edit.value.slice(0, edit.cur);
-    const ch = edit.value[edit.cur] ?? " ";
-    const after = edit.value.slice(edit.cur + 1);
+    const end = nextBoundary(edit.value, edit.cur);
+    const ch = edit.value.slice(edit.cur, end) || " ";
+    const after = edit.value.slice(end);
     return (
       <Text wrap="truncate">
         {before}
@@ -2241,7 +2272,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     if (overlay === "file") {
       const items = [t("menu.save"), t("menu.new"), t("menu.open"), t("menu.run"), t("menu.export"), t("menu.closeTab"), t("menu.qr")];
       return centerBox(
-        "File",
+        t("btn.file"),
         items.map((t, i) => (
           <Text key={t} inverse={i === menuIdx}>{i === menuIdx ? ">" : " "} {i + 1} {t}</Text>
         )),
@@ -2575,11 +2606,11 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       {overlay ? (
         renderOverlay()
       ) : (
-        <Box flexDirection="row" flexGrow={1}>
+        <Box flexDirection="row" height={midH} flexShrink={0}>
           {sideOpen ? renderSidebar() : null}
           {tabs.map((tb, pi) => {
             const isA = pi === active;
-            const srcW = viewMode === "split" ? pairSrcW : pairW;
+            const srcW = pairSrcW;
             const base = tb.path.split("/").pop() || tb.path;
             const isDirty = isA ? lines.join("\n") !== baseline : tb.lines.join("\n") !== tb.baseline;
             const lastW = pi === tabs.length - 1;
@@ -2598,11 +2629,11 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
                     : { cursor: null, sel: null, edTop: tb.edTop, edLeft: tb.edLeft, focusEd: false, showFind: false, title: { name: base, dirty: isDirty } },
                 )}
                 {viewMode === "source" ? null : isA ? (
-                  renderPreviewPane(pairW - srcW)
+                  renderPreviewPane(pairPreviewW)
                 ) : (
                   <StaticPreview
                     text={tb.lines.join("\n")}
-                    w={pairW - srcW}
+                    w={pairPreviewW}
                     top={tb.pvTop}
                     count={innerH}
                   />
@@ -2612,6 +2643,13 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
           })}
         </Box>
       )}
+      {term && !overlay ? (
+        <Box flexDirection="column" height={outH} flexShrink={0} borderStyle="single" borderColor={theme.focus}>
+          {termLines.slice(termTop, termTop + outInnerH).map((line, i) => (
+            <Text key={i} wrap="truncate">{line || " "}</Text>
+          ))}
+        </Box>
+      ) : null}
       <Box>
         {menuSel ? (
           <Text bold wrap="truncate">{t("hint.menu")}</Text>
@@ -2622,7 +2660,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         ) : term ? (
           <Text dimColor wrap="truncate">{t("hint.output")}</Text>
         ) : find && findMatches.length ? (
-          <Text dimColor wrap="truncate">find “{find.pattern}” {curFindIdx + 1}/{findMatches.length} (^O n/N · Esc clear){asking ? " · asking…" : ""}</Text>
+          <Text dimColor wrap="truncate">{t("hint.findActive", { p: find.pattern, i: curFindIdx + 1, n: findMatches.length })}{asking ? t("hint.asking") : ""}</Text>
         ) : (
           <Text dimColor wrap="truncate">{t("hint.default")} · {stats.words}w{vimOn ? (vimInsert ? ` · ${t("status.insert")}` : ` · ${t("status.normal")}`) : ""}{gitSt ? ` · git:${gitSt.branch}${gitSt.ahead ? `⇡${gitSt.ahead}` : ""}${gitSt.behind ? `⇣${gitSt.behind}` : ""}${gitSt.conflict ? " !conflict" : ""}` : ""}{asking ? t("hint.asking") : ""}</Text>
         )}

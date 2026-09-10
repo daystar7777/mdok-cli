@@ -1,4 +1,5 @@
 import { strWidth } from "./width.js";
+import { tr, type Lang } from "./i18n.js";
 
 export interface LintProblem {
   line: number; // 0-based
@@ -8,7 +9,7 @@ export interface LintProblem {
 }
 
 /** Small markdown linter: whitespace, blank runs, heading jumps, fences. */
-export function lintMarkdown(lines: string[]): LintProblem[] {
+export function lintMarkdown(lines: string[], lang: Lang = "en"): LintProblem[] {
   const out: LintProblem[] = [];
   let fence: { char: string; length: number } | null = null;
   let prevLevel = 0;
@@ -28,26 +29,26 @@ export function lintMarkdown(lines: string[]): LintProblem[] {
     {
       const trail = ln.match(/[ \t]+$/);
       if (trail && ln.trim() !== "" && !/ {2}$/.test(ln)) {
-        out.push({ line: i, col: ln.length - trail[0].length, rule: "trail", msg: "trailing whitespace" });
+        out.push({ line: i, col: ln.length - trail[0].length, rule: "trail", msg: tr(lang, "lint.trail") });
       }
       const h = ln.match(/^(#{1,6})\s+\S/);
       if (h) {
         const lv = h[1].length;
         if (prevLevel > 0 && lv > prevLevel + 1) {
-          out.push({ line: i, col: 0, rule: "heading", msg: `heading jumped H${prevLevel} → H${lv}` });
+          out.push({ line: i, col: 0, rule: "heading", msg: tr(lang, "lint.heading", { from: prevLevel, to: lv }) });
         }
         prevLevel = lv;
       }
     }
     if (ln.trim() === "") {
       blanks += 1;
-      if (blanks === 2) out.push({ line: i, col: 0, rule: "blanks", msg: "more than one blank line" });
+      if (blanks === 2) out.push({ line: i, col: 0, rule: "blanks", msg: tr(lang, "lint.blanks") });
     } else {
       blanks = 0;
     }
   });
   if (fence) {
-    out.push({ line: Math.max(0, lines.length - 1), col: 0, rule: "fence", msg: "unclosed code fence" });
+    out.push({ line: Math.max(0, lines.length - 1), col: 0, rule: "fence", msg: tr(lang, "lint.fence") });
   }
   return out;
 }

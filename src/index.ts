@@ -22,7 +22,7 @@ import {
 } from "./config.js";
 
 function cliLang() {
-  if (process.env.MDOK_LANG === "ko" || process.env.MDOK_LANG === "en") return process.env.MDOK_LANG;
+  if (process.env.MDOK_LANG) return normalizeLang(process.env.MDOK_LANG);
   try {
     const raw = JSON.parse(readFileSync(join(homedir(), ".mdok.json"), "utf-8")) as { lang?: unknown };
     return normalizeLang(raw?.lang);
@@ -34,16 +34,25 @@ const cl = cliLang();
 const ct = (k: MsgKey, v?: Record<string, string | number>) => tr(cl, k, v);
 
 const program = new Command();
+program.helpOption("-h, --help", ct("cli.helpHelp"));
+program.addHelpCommand(false);
+program.configureHelp({
+  formatHelp: (command, helper) => {
+    let text = Object.getPrototypeOf(helper).formatHelp.call(helper, command, helper) as string;
+    if (cl === "ko") text = text.replace(/^Usage:/m, "사용법:").replace(/^Arguments:/m, "인자:").replace(/^Options:/m, "옵션:").replace(/^Commands:/m, "명령:");
+    return text;
+  },
+});
 
 program
   .name("mdok")
-  .description("Markdown OK — pretty CLI viewer + LLM analysis (BYOK)")
-  .version("0.1.4");
+  .description(ct("cli.description"))
+  .version("0.1.5", "-V, --version", ct("cli.versionHelp"));
 
 program
   .command("view")
-  .argument("<file>", "markdown file to render")
-  .description("Pretty-print a markdown file in the terminal")
+  .argument("<file>", ct("cli.fileArg"))
+  .description(ct("cli.viewHelp"))
   .action(async (file: string) => {
     try {
       const md = await readFile(file, "utf-8");
@@ -56,10 +65,10 @@ program
 
 program
   .command("ask")
-  .argument("<file>", "markdown file to analyze")
-  .requiredOption("-q, --question <q>", "question about the file")
-  .option("-m, --model <model>", "override model")
-  .description("Ask an LLM about a markdown file (BYOK)")
+  .argument("<file>", ct("cli.fileArg"))
+  .requiredOption("-q, --question <q>", ct("cli.questionHelp"))
+  .option("-m, --model <model>", ct("cli.modelHelp"))
+  .description(ct("cli.askHelp"))
   .action(async (file: string, opts: { question: string; model?: string }) => {
     try {
       const cfg = await loadConfig();
@@ -67,7 +76,7 @@ program
       if (!apiKey) {
         console.error(
           chalk.red(
-            `${ct("cli.noKey")}\nConfig file: ${configPath()}`,
+            `${ct("cli.noKey")}\n${ct("cli.config", { f: configPath() })}`,
           ),
         );
         process.exitCode = 1;
@@ -89,20 +98,25 @@ program
 
 program
   .command("config")
-  .description("Show or update mdok config (~/.mdok.json)")
-  .option("--key <key>", "set API key")
-  .option("--url <url>", "set OpenAI-compatible base URL")
-  .option("--model <model>", "set default model")
-  .option("--theme <theme>", "set TUI theme (forest|ocean|sunset|mono|rose)")
-  .option("--lang <ko|en>", "UI language")
-  .option("--git <on|off>", "git sync on/off")
+  .description(ct("cli.configHelp"))
+  .option("--key <key>", ct("cli.keyHelp"))
+  .option("--url <url>", ct("cli.urlHelp"))
+  .option("--model <model>", ct("cli.modelHelp"))
+  .option("--theme <theme>", ct("cli.themeHelp"))
+  .option("--lang <ko|en>", ct("cli.langHelp"))
+  .option("--git <on|off>", ct("cli.gitHelp"))
   .action(async (opts: { key?: string; url?: string; model?: string; theme?: string; git?: string; lang?: string }) => {
     const patch: Record<string, string> = {};
     if (opts.key) patch.apiKey = opts.key;
     if (opts.url) patch.baseURL = opts.url;
     if (opts.model) patch.model = opts.model;
     if (opts.theme) patch.theme = opts.theme;
-    if (opts.lang) patch.lang = opts.lang;
+    if (opts.lang) {
+      if (!/^(ko|en)(?:[-_.]|$)/i.test(opts.lang.trim())) {
+        console.error(ct("cli.badLang", { lang: opts.lang })); process.exitCode = 1; return;
+      }
+      patch.lang = normalizeLang(opts.lang);
+    }
     const boolPatch: { gitSync?: boolean } = {};
     if (opts.git) boolPatch.gitSync = opts.git !== "off" && opts.git !== "false";
     const cfg =
@@ -116,12 +130,12 @@ program
 
 program
   .command("lint")
-  .argument("<file>", "markdown file to lint")
-  .description("Check a markdown file (whitespace, headings, fences)")
+  .argument("<file>", ct("cli.fileArg"))
+  .description(ct("cli.lintHelp"))
   .action(async (file: string) => {
     try {
       const md = await readFile(file, "utf-8");
-      const problems = lintMarkdown(md.split("\n"));
+      const problems = lintMarkdown(md.split("\n"), cl);
       for (const p of problems) {
         console.log(`${file}:${p.line + 1}:${p.col + 1}: ${p.rule} ${p.msg}`);
       }
@@ -135,9 +149,9 @@ program
 
 program
   .command("export")
-  .argument("<file>", "markdown file to export")
-  .option("-o, --out <out>", "output html path")
-  .description("Export a markdown file to standalone HTML")
+  .argument("<file>", ct("cli.fileArg"))
+  .option("-o, --out <out>", ct("cli.outHelp"))
+  .description(ct("cli.exportHelp"))
   .action(async (file: string, opts: { out?: string }) => {
     try {
       const md = await readFile(file, "utf-8");
@@ -152,7 +166,7 @@ program
 
 // Default: TUI. `mdok <file>` opens only the requested file;
 // bare `mdok` resumes the session. Piped output pretty-prints one file.
-program.argument("[file]", "markdown file to open in TUI").action(async (file?: string) => {
+program.argument("[file]", ct("cli.fileArg")).action(async (file?: string) => {
   const interactive = process.stdin.isTTY && process.stdout.isTTY;
   if (!file && !interactive) {
     program.help();
