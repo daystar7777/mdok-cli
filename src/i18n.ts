@@ -1,6 +1,16 @@
 export type Lang = "ko" | "en";
 
 const en = {
+  "menu.qr": "Show file as QR (^O Q)",
+  "qr.title": "QR",
+  "qr.note": "Buffer snapshot · compressed, NOT encrypted",
+  "qr.size": "QR needs at least 37 columns × 23 rows. Resize and retry.",
+  "qr.limit": "QR limit: 1 MiB source / 4096 frames. Use a smaller document.",
+  "qr.resize": "Window too small. Enlarge, or close and reopen QR to re-split.",
+  "qr.keys": "←/→ pages · Space auto · Esc close",
+  "qr.play": "Auto 1s",
+  "qr.pause": "Paused",
+  "qr.receiver": "MDOK1 format · receiver UI not included yet",
   // header buttons
   "btn.split": "Split",
   "btn.src": "Src",
@@ -135,6 +145,8 @@ const en = {
   "msg.lastTab": "last tab — quit to close (^O q)",
   "msg.closeConfirm": "modified — press ^O w again to close without saving",
   "msg.quitConfirm": "modified — press quit again to discard changes",
+  "msg.noUndo": "nothing to undo",
+  "msg.noRedo": "nothing to redo",
   "msg.tooNarrow": "too narrow for another pair — close one first",
   "msg.committed": "committed",
   "msg.commitFailed": "commit failed: {e}",
@@ -176,6 +188,16 @@ const en = {
 export type MsgKey = keyof typeof en;
 
 const ko: Record<MsgKey, string> = {
+  "menu.qr": "파일 QR 표시 (^O Q)",
+  "qr.title": "QR",
+  "qr.note": "현재 버퍼 사본 · 압축됨, 암호화 아님",
+  "qr.size": "QR은 최소 37열 × 23행이 필요합니다. 창을 키워 다시 시도하세요.",
+  "qr.limit": "QR 한도: 원문 1 MiB / 4096장. 더 작은 문서를 사용하세요.",
+  "qr.resize": "창이 작습니다. 확대하거나 QR을 닫고 다시 열어 재분할하세요.",
+  "qr.keys": "←/→ 이동 · Space 자동 · Esc 닫기",
+  "qr.play": "자동 1초",
+  "qr.pause": "일시정지",
+  "qr.receiver": "MDOK1 형식 · 수신 UI는 아직 미포함",
   "btn.split": "분할",
   "btn.src": "소스",
   "btn.view": "보기",
@@ -297,6 +319,8 @@ const ko: Record<MsgKey, string> = {
   "msg.lastTab": "마지막 탭 — 종료하려면 ^O q",
   "msg.closeConfirm": "수정됨 — 저장 없이 닫으려면 ^O w 다시",
   "msg.quitConfirm": "수정됨 — 버리려면 종료 다시",
+  "msg.noUndo": "되돌릴 것 없음",
+  "msg.noRedo": "다시할 것 없음",
   "msg.tooNarrow": "더는 좁아질 수 없음 — 페어를 먼저 닫으세요",
   "msg.committed": "커밋됨",
   "msg.commitFailed": "커밋 실패: {e}",

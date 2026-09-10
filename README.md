@@ -2,6 +2,8 @@
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
+> Design docs for peer review: [`docs/`](docs/) (architecture, editor, sync, LLM, roadmap).
+
 Terminal TUI editor for `.md` files: sidebar explorer + source + live preview,
 themes, tabs, find/replace, lint, shell runner, and BYOK LLM (ask + rewrite).
 

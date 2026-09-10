@@ -14,6 +14,7 @@ import { exec } from "node:child_process";
 import { saveSession, saveSessionSync, type Session } from "./session.js";
 import { join } from "node:path";
 import { renderMarkdown } from "./render.js";
+import { createQrTransfer, qrTerminalRows, type QrTransfer } from "./qr.js";
 import { buildPrompt, chatCompletionStream } from "./llm.js";
 import {
   loadConfig,
@@ -25,7 +26,7 @@ import {
 
 type Focus = "editor" | "preview" | "side";
 type ViewMode = "split" | "source" | "preview";
-type OverlayKind = "file" | "open" | "ask" | "find" | "run" | "lint" | "diff" | "sync" | "settings" | "help";
+type OverlayKind = "file" | "open" | "ask" | "find" | "run" | "lint" | "diff" | "sync" | "settings" | "help" | "qr";
 
 interface BtnSpan {
   id: string;
@@ -300,6 +301,15 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const [curFile, setCurFile] = useState(firstTab.path);
   const [viewMode, setViewMode] = useState<ViewMode>("split");
   const [overlay, setOverlay] = useState<OverlayKind | null>(null);
+  const [qr, setQr] = useState<QrTransfer | null>(null);
+  const [qrPage, setQrPage] = useState(0);
+  const [qrPlaying, setQrPlaying] = useState(false);
+  useEffect(() => {
+    if (overlay !== "qr" || !qrPlaying || !qr) return;
+    const timer = setInterval(() => setQrPage(i => (i + 1) % qr.frames.length), 1000);
+    return () => clearInterval(timer);
+  }, [overlay, qrPlaying, qr]);
+  const qrRows = useMemo(() => qr ? qrTerminalRows(qr.frames[qrPage], qr.version) : [], [qr, qrPage]);
   const [menuIdx, setMenuIdx] = useState(0);
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [askEdit, setAskEdit] = useState<MiniEdit>({ value: "", cur: 0 });
@@ -321,6 +331,57 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const [term, setTerm] = useState<{ cmd: string; out: string; code: number | null; running: boolean } | null>(null);
   const [termTop, setTermTop] = useState(0);
   const termRunId = useRef(0);
+  interface UndoSnap {
+    lines: string[];
+    cursor: Cursor;
+  }
+  const undoStacks = useRef(new Map<string, { u: UndoSnap[]; r: UndoSnap[] }>());
+  const lastPush = useRef<{ at: number; kind: string } | null>(null);
+  const stackFor = (path: string) => {
+    let st = undoStacks.current.get(path);
+    if (!st) {
+      st = { u: [], r: [] };
+      undoStacks.current.set(path, st);
+    }
+    return st;
+  };
+  const pushUndo = (prev: UndoSnap, kind: string) => {
+    const now = Date.now();
+    const last = lastPush.current;
+    // coalesce rapid typing into one undo step
+    if (kind === "type" && last && last.kind === "type" && now - last.at < 1200) return;
+    lastPush.current = { at: now, kind };
+    const st = stackFor(curFile);
+    st.u.push({ lines: [...prev.lines], cursor: { ...prev.cursor } });
+    if (st.u.length > 100) st.u.shift();
+    st.r.length = 0;
+  };
+  const doUndo = () => {
+    const st = stackFor(curFile);
+    const e = st.u.pop();
+    if (!e) {
+      setMsg(t("msg.noUndo"));
+      return;
+    }
+    st.r.push({ lines: [...lines], cursor: { ...cursor } });
+    lastPush.current = null;
+    setLines([...e.lines]);
+    setCursor({ ...e.cursor });
+    setSel(null);
+  };
+  const doRedo = () => {
+    const st = stackFor(curFile);
+    const e = st.r.pop();
+    if (!e) {
+      setMsg(t("msg.noRedo"));
+      return;
+    }
+    st.u.push({ lines: [...lines], cursor: { ...cursor } });
+    lastPush.current = null;
+    setLines([...e.lines]);
+    setCursor({ ...e.cursor });
+    setSel(null);
+  };
   const termChild = useRef<ReturnType<typeof exec> | null>(null);
   const askRunId = useRef(0);
   const askCtl = useRef<AbortController | null>(null);
@@ -643,6 +704,16 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     openTab(p, "", t("msg.newFile", { f: p }));
   };
   const openOverlayKind = async (kind: OverlayKind) => {
+    if (kind === "qr") {
+      try {
+        setQr(createQrTransfer(curFile, lines.join("\n"), columns, rows));
+        setQrPage(0);
+        setQrPlaying(false);
+      } catch (err) {
+        setMsg(t((err as Error).message === "size" ? "qr.size" : "qr.limit"));
+        return;
+      }
+    }
     setMenuIdx(0);
     if (kind === "open") {
       try {
@@ -1157,6 +1228,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       else if (idx === 3) void openOverlayKind("run");
       else if (idx === 4) void exportHtml();
       else if (idx === 5) closeTab();
+      else if (idx === 6) void openOverlayKind("qr");
     } else if (overlay === "open") {
       const name = openFiles[idx];
       if (name) void switchToFile(join(process.cwd(), name));
@@ -1370,6 +1442,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       const btn = cb & 3;
       const x = x1 - 1; // 0-based screen coords (alternate screen => layout rows)
       const y = y1 - 1;
+      if (g.overlay === "qr") return; // fullscreen QR must not activate hidden controls
 
       // Header button bar
       if (y === 0) {
@@ -1615,6 +1688,16 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     // Overlay open: route all keys to it (clears any pending leader)
     if (overlay) {
       setLeader(false);
+      if (overlay === "qr") {
+        if (key.escape || input === "q") { setOverlay(null); setQrPlaying(false); }
+        else if (input === " ") setQrPlaying(v => !v);
+        else if (qr && (key.leftArrow || key.rightArrow || input === "n" || input === "p")) {
+          setQrPlaying(false);
+          const delta = key.leftArrow || input === "p" ? -1 : 1;
+          setQrPage(i => (i + delta + qr.frames.length) % qr.frames.length);
+        }
+        return;
+      }
       if (key.escape) {
         if (Date.now() - uiOpenedAt.current < 300) return;
         if (overlay === "settings" && setEditing) setSetEditing(null);
@@ -1626,10 +1709,10 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         return;
       }
       if (overlay === "file") {
-        if (key.upArrow) setMenuIdx((i) => (i + 5) % 6);
-        else if (key.downArrow) setMenuIdx((i) => (i + 1) % 6);
+        if (key.upArrow) setMenuIdx((i) => (i + 6) % 7);
+        else if (key.downArrow) setMenuIdx((i) => (i + 1) % 7);
         else if (key.return) activateMenuIndex(menuIdx);
-        else if (input >= "1" && input <= "6") activateMenuIndex(parseInt(input, 10) - 1);
+        else if (input >= "1" && input <= "7") activateMenuIndex(parseInt(input, 10) - 1);
         return;
       }
       if (overlay === "open") {
@@ -1763,6 +1846,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         setQuitArmed(false);
       } else if (input === "f") {
         void openOverlayKind("file");
+      } else if (input === "Q") {
+        void openOverlayKind("qr");
       } else if (input === "a") {
         void openOverlayKind("ask");
       } else if (input === "/") {
@@ -1870,11 +1955,29 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       return;
     }
 
+    if (key.ctrl && input === "z" && focus === "editor") {
+      doUndo();
+      return;
+    }
+    if (key.ctrl && input === "y" && focus === "editor") {
+      doRedo();
+      return;
+    }
     // Editor focused — collapse an active selection before editing,
     // clear it on navigation.
     let L = lines;
     let C = cursor;
     const keepSel = sel;
+    const printableNow = Boolean(input && !key.ctrl && !key.meta && !key.escape);
+    const editKind =
+      key.return || key.backspace || key.delete || key.tab
+        ? "break"
+        : printableNow
+          ? input.includes("\n")
+            ? "break"
+            : "type"
+          : "";
+    if (editKind) pushUndo({ lines, cursor }, editKind);
     const printable = Boolean(input && !key.ctrl && !key.meta && !key.escape);
     if (vimOn && !vimInsert) {
       if (key.ctrl || key.meta) return;
@@ -2121,7 +2224,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
 
   const renderOverlay = () => {
     if (overlay === "file") {
-      const items = [t("menu.save"), t("menu.new"), t("menu.open"), t("menu.run"), t("menu.export"), t("menu.closeTab")];
+      const items = [t("menu.save"), t("menu.new"), t("menu.open"), t("menu.run"), t("menu.export"), t("menu.closeTab"), t("menu.qr")];
       return centerBox(
         "File",
         items.map((t, i) => (
@@ -2396,6 +2499,18 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     </Box>
   );
 
+  if (overlay === "qr" && qr) {
+    const fits = qrRows.length + 4 <= rows && (qrRows[0]?.length ?? 0) <= columns;
+    return <Box flexDirection="column" height={rows} width={columns}>
+      <Text wrap="truncate">{t("qr.title")} {truncToWidth(qr.name, Math.max(1, columns - 25))} · {qrPage + 1}/{qr.frames.length}</Text>
+      <Text wrap="truncate">{t("qr.note")}</Text>
+      {fits ? <Box flexDirection="column" alignItems="center" flexGrow={1} justifyContent="center">
+        {qrRows.map((line, i) => <Text key={i} color="#000000" backgroundColor="#ffffff" wrap="truncate">{line}</Text>)}
+      </Box> : <Text>{t("qr.resize")}</Text>}
+      <Text wrap="truncate">{t("qr.keys")} · {qrPlaying ? t("qr.play") : t("qr.pause")}</Text>
+      <Text wrap="truncate">{t("qr.receiver")}</Text>
+    </Box>;
+  }
   return (
     <Box flexDirection="column" height={rowsSafe}>
       <Box>

@@ -1,0 +1,48 @@
+appId: net.mdok.app
+productName: mdok
+copyright: Copyright © 2026 daystar7777
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  # Staged by CI/local before packaging:
+  #   cp dist-pkg/mdok-<this-os> desktop/staging-bin/mdok-bin[.exe]
+  - from: staging-bin/
+    to: bin/
+    filter:
+      - mdok-bin
+      - mdok-bin.exe
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  fileAssociations:
+    - ext: [md, markdown]
+      name: Markdown document
+      role: Editor
+win:
+  target:
+    - nsis
+  fileAssociations:
+    - ext: [md, markdown]
+      name: Markdown document
+      role: Editor
+linux:
+  category: Office
+  target:
+    - AppImage
+    - deb
+  fileAssociations:
+    - ext: [md, markdown]
+      name: Markdown document
+      role: Editor
+      mimeType: text/markdown
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: mdok
