@@ -43,3 +43,30 @@ test("single frame, screen and input limits", () => {
   assert.throws(() => createQrTransfer("a.md", "hello", 80, 22), /size/);
   assert.throws(() => createQrTransfer("a.md", "x".repeat(1024 * 1024 + 1), 80, 24), /limit/);
 });
+
+for (const [columns, rows] of [[37,23],[80,24],[80,30],[120,40],[160,60]]) {
+  test(`all QR frames decode with foreground/background cell mapping at ${columns}x${rows}`, () => {
+    const content = Array.from({length:30},(_,i)=>`${i}: 간단한 문서입니다 ${i*1937}`).join("\n");
+    const transfer = createQrTransfer("probe.md", content, columns, rows);
+    const chunks: string[] = [];
+    for (const frame of transfer.frames) {
+      const lines = qrTerminalRows(frame, transfer.version), scale=5;
+      const width=lines[0].length*scale,height=lines.length*2*scale;
+      const pixels=new Uint8ClampedArray(width*height*4);
+      for(let y=0;y<height;y++) for(let x=0;x<width;x++) {
+        const moduleY=Math.floor(y/scale),cell=lines[Math.floor(moduleY/2)][Math.floor(x/scale)];
+        // Same upper-half foreground / lower-half background mapping as TUI.
+        const top=cell==="█"||cell==="▀",bottom=cell==="█"||cell==="▄";
+        const value=(moduleY%2===0?top:bottom)?0:255,k=(y*width+x)*4;
+        pixels[k]=pixels[k+1]=pixels[k+2]=value;pixels[k+3]=255;
+      }
+      const decoded=jsQR(pixels,width,height);
+      assert.equal(decoded?.data,frame);
+      const [,id,index,count,chunk]=decoded!.data.split(":");
+      assert.equal(Number(count),transfer.frames.length);
+      assert.equal(id,transfer.frames[0].split(":")[1]);
+      chunks[Number(index)-1]=chunk;
+    }
+    assert.deepEqual(JSON.parse(gunzipSync(Buffer.from(chunks.join(""),"base64")).toString()),{name:"probe.md",content});
+  });
+}

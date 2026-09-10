@@ -12,22 +12,32 @@ export function createQrTransfer(path: string, content: string, columns: number,
   const bytes = Buffer.byteLength(content, "utf8");
   if (bytes > 1024 * 1024) throw new Error("limit");
   const name = basename(path);
-  const encoded = gzipSync(Buffer.from(JSON.stringify({ name, content }), "utf8")).toString("base64");
+  const encoded = gzipSync(Buffer.from(JSON.stringify({ name, content }), "utf8"), { level: 9 }).toString("base64");
   const id = createHash("sha256").update(encoded).digest("hex").slice(0, 16);
   // Four-module quiet zone; two module rows per terminal row. Reserve UI rows.
-  const version = Math.min(10, Math.floor((Math.min(columns, (rows - 4) * 2) - 25) / 4));
+  const version = Math.min(40, Math.floor((Math.min(columns, (rows - 4) * 2) - 25) / 4));
   if (version < 3) throw new Error("size");
-  const fits = (n: number) => {
-    try { QRCode.create(`MDOK1:${id}:4096:4096:${"a".repeat(n)}`, { version, errorCorrectionLevel: "L" }); return true; }
-    catch { return false; }
-  };
-  let low = 0, high = 3000;
-  while (low < high) { const mid = Math.ceil((low + high) / 2); if (fits(mid)) low = mid; else high = mid - 1; }
-  if (!low) throw new Error("size");
-  const count = Math.ceil(encoded.length / low);
+  // Reserve only the actual index digit count, not 4096 on every small transfer.
+  // Explicit byte mode yields a safe content-independent capacity bound.
+  let count = 1, capacity = 0;
+  for (;;) {
+    let low = 0, high = 3000;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      try {
+        QRCode.create([{ data: Buffer.from(`MDOK1:${id}:${count}:${count}:${"a".repeat(mid)}`), mode: "byte" }], { version, errorCorrectionLevel: "L" });
+        low = mid;
+      } catch { high = mid - 1; }
+    }
+    if (!low) throw new Error("size");
+    capacity = low;
+    const next = Math.ceil(encoded.length / capacity);
+    if (String(next).length <= String(count).length) { count = next; break; }
+    count = next;
+  }
   if (count > 4096) throw new Error("limit");
   return { name, bytes, version, frames: Array.from({ length: count }, (_, i) =>
-    `MDOK1:${id}:${i + 1}:${count}:${encoded.slice(i * low, (i + 1) * low)}`) };
+    `MDOK1:${id}:${i + 1}:${count}:${encoded.slice(i * capacity, (i + 1) * capacity)}`) };
 }
 
 /** Black modules on a white background, including a four-module quiet zone. */

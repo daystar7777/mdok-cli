@@ -26,7 +26,7 @@ npm link  # 或: node dist/index.js
 ## 用法
 
 ```sh
-mdok README.md      # 打开 (同时恢复会话中的其他标签页)
+mdok README.md      # 只打开指定文件
 mdok                # 恢复上次会话
 mdok view README.md # 非交互式美化输出 (管道、脚本用)
 mdok README.md | less

@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import chalk from "chalk";
+import { qrInputAction } from "./qr-input.js";
 import { Box, Text, useApp, useInput, useWindowSize, type Key } from "ink";
 import { readFile, readdir } from "node:fs/promises";
 import { writeFileAtomic } from "./atomic.js";
@@ -7,9 +9,9 @@ import { relative } from "node:path";
 import { lintMarkdown, formatMd, formatTable, diffLines, type LintProblem } from "./lint.js";
 import { BUILTIN_THEMES, loadThemes, themeByName, type TuiTheme } from "./theme.js";
 import { tr, normalizeLang, type Lang, type MsgKey } from "./i18n.js";
-import { charWidth, strWidth, sliceByWidth, colOfIndex, indexOfCol } from "./width.js";
+import { charWidth, strWidth, sliceByWidth, colOfIndex, indexOfCol, graphemes } from "./width.js";
 import { markdownToHtml } from "./html.js";
-import { gitStatus, gitRoot, gitSyncState, gitCommitAll, gitPullRebase, gitPush, type GitSyncState } from "./git.js";
+import { gitStatus, gitRoot, gitSyncState, gitCommitAll, gitCommitFile, gitPullRebase, gitPush, type GitSyncState } from "./git.js";
 import { exec } from "node:child_process";
 import { saveSession, saveSessionSync, type Session } from "./session.js";
 import { join } from "node:path";
@@ -69,7 +71,7 @@ export function truncToWidth(s: string, maxW: number): string {
   if (strWidth(s) <= maxW) return s;
   let out = "";
   let w = 0;
-  for (const ch of s) {
+  for (const ch of graphemes(s)) {
     const cw = charWidth(ch);
     if (w + cw > Math.max(0, maxW - 1)) break;
     out += ch;
@@ -103,6 +105,7 @@ interface TabSnap {
 }
 
 export interface InitialTab {
+  baseline?: string;
   path: string;
   content: string;
   cursor?: Cursor;
@@ -275,7 +278,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       return {
         path: t.path,
         lines: cls,
-        baseline: t.content,
+        baseline: t.baseline ?? t.content,
         cursor: { r: cr, c: Math.min(Math.max(0, t.cursor?.c ?? 0), (cls[cr] ?? "").length) },
         sel: null,
         edTop: 0,
@@ -287,8 +290,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   );
   const [active, setActive] = useState(startIdx);
   const [lines, setLines] = useState<string[]>(() => firstTab.content.split("\n"));
-  const [baseline, setBaseline] = useState(firstTab.content);
-  const [cursor, setCursor] = useState<Cursor>(firstTab.cursor ?? { r: 0, c: 0 });
+  const [baseline, setBaseline] = useState(firstTab.baseline ?? firstTab.content);
+  const [cursor, setCursor] = useState<Cursor>(tabs[startIdx].cursor);
   const [sel, setSel] = useState<Sel | null>(null);
   const [edTop, setEdTop] = useState(0);
   const [edLeft, setEdLeft] = useState(0);
@@ -322,7 +325,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const [gitMap, setGitMap] = useState<Map<string, string>>(new Map());
   const [gitRootPath, setGitRootPath] = useState<string | null>(null);
   const [gitSt, setGitSt] = useState<GitSyncState | null>(null);
-  const [gitSyncOn, setGitSyncOn] = useState(true);
+  const [gitSyncOn, setGitSyncOn] = useState(false);
   const gitCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Bottom shell runner (non-interactive commands, output stays in-editor)
   const [runEdit, setRunEdit] = useState<MiniEdit>({ value: "", cur: 0 });
@@ -572,14 +575,14 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
             path: curFile,
             cursor,
             ...(lines.join("\n") !== baseline
-              ? { content: lines.join("\n").slice(0, 100000) }
+              ? { content: lines.join("\n") }
               : {}),
           }
         : {
             path: t.path,
             cursor: t.cursor,
             ...(t.lines.join("\n") !== t.baseline
-              ? { content: t.lines.join("\n").slice(0, 100000) }
+              ? { content: t.lines.join("\n") }
               : {}),
           },
     ),
@@ -941,7 +944,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     if (gitCommitTimer.current) clearTimeout(gitCommitTimer.current);
     gitCommitTimer.current = setTimeout(() => {
       const base = path.split("/").pop() || path;
-      void gitCommitAll(root, `mdok: ${base}`)
+      void gitCommitFile(root, path, `mdok: ${base}`)
         .then(() => {
           setMsg(t("msg.autoCommitted", { f: base }));
           void refreshGit();
@@ -1369,7 +1372,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       void saveSession(buildSession());
     }, 1500);
     return () => clearTimeout(t);
-  }, [tabs, active, curFile, cursor, lines]);
+  }, [tabs, active, curFile, cursor, lines, baseline]);
 
   const pvFollow = useRef(true);
   // Keep cursor visible in editor viewport (visual columns for CJK)
@@ -1615,6 +1618,17 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   }, []);
 
   useInput((input, key) => {
+    // QR consumes only explicit commands, before the mouse suppression window.
+    if (overlay === "qr" && !key.ctrl) {
+      const action = qrInputAction(input, key);
+      if (action === "close") { setOverlay(null); setQrPlaying(false); }
+      else if (action === "toggle") setQrPlaying(v => !v);
+      else if (qr && (action === "next" || action === "previous")) {
+        setQrPlaying(false);
+        setQrPage(i => (i + (action === "previous" ? -1 : 1) + qr.frames.length) % qr.frames.length);
+      }
+      return;
+    }
     if (process.env.MDOK_MOUSELOG === "1") {
       try {
         appendFileSync(
@@ -2446,7 +2460,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
             const winEnd = vw.edLeft + tw;
             let col = 0;
             let ti = 0;
-            for (const ch of ln) {
+            for (const ch of graphemes(ln)) {
               const cw = charWidth(ch);
               const c0 = col;
               col += cw;
@@ -2502,13 +2516,24 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
 
   if (overlay === "qr" && qr) {
     const fits = qrRows.length + 4 <= rows && (qrRows[0]?.length ?? 0) <= columns;
+    const pageLabel = `${qrPage + 1}/${qr.frames.length}`;
+    const showSideLabel = (qrRows[0]?.length ?? 0) + 2 + pageLabel.length <= columns;
     return <Box flexDirection="column" height={rows} width={columns}>
       <Text wrap="truncate">{t("qr.title")} {truncToWidth(qr.name, Math.max(1, columns - 25))} · {qrPage + 1}/{qr.frames.length}</Text>
       <Text wrap="truncate">{t("qr.note")}</Text>
       {fits ? <Box flexDirection="column" alignItems="center" flexGrow={1} justifyContent="center">
-        {qrRows.map((line, i) => <Text key={i} color="#000000" backgroundColor="#ffffff" wrap="truncate">{line}</Text>)}
+        <Box flexDirection="row" alignItems="center">
+          <Box flexDirection="column" flexShrink={0}>
+            {qrRows.map((line, i) => <Text key={i} wrap="truncate">
+              {chalk.level === 0 ? line : Array.from(line, (cell, j) => <Text key={j}
+                color={cell === "█" || cell === "▀" ? "#000000" : "#ffffff"}
+                backgroundColor={cell === "█" || cell === "▄" ? "#000000" : "#ffffff"}>▀</Text>)}
+            </Text>)}
+          </Box>
+          {showSideLabel && <Box marginLeft={2} flexShrink={0}><Text bold>{pageLabel}</Text></Box>}
+        </Box>
       </Box> : <Text>{t("qr.resize")}</Text>}
-      <Text wrap="truncate">{t("qr.keys")} · {qrPlaying ? t("qr.play") : t("qr.pause")}</Text>
+      <Text wrap="truncate">{!showSideLabel ? `${pageLabel} · ` : ""}{t("qr.keys")} · {qrPlaying ? t("qr.play") : t("qr.pause")}</Text>
       <Text wrap="truncate">{t("qr.receiver")}</Text>
     </Box>;
   }

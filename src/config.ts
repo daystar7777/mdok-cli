@@ -32,7 +32,7 @@ const DEFAULTS: MdokConfig = {
   recent: [],
   lineNums: false,
   vimMode: false,
-  gitSync: true,
+  gitSync: false,
 };
 
 export async function loadConfig(): Promise<MdokConfig> {

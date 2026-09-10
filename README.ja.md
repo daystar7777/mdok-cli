@@ -27,7 +27,7 @@ npm link  # または: node dist/index.js
 ## 使い方
 
 ```sh
-mdok README.md      # 開く (セッションの他タブも復元)
+mdok README.md      # 指定したファイルだけ開く
 mdok                # 前回のセッションを再開
 mdok view README.md # 非対話式のきれいな表示 (パイプ、スクリプト用)
 mdok README.md | less

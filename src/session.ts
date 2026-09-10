@@ -17,25 +17,30 @@ export interface Session {
 }
 
 const SESSION_PATH = join(homedir(), ".mdok-session.json");
+const safeIndex = (value: unknown): number => typeof value === "number" && Number.isFinite(value)
+  ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(value))) : 0;
 
 export async function loadSession(): Promise<Session | null> {
   if (!existsSync(SESSION_PATH)) return null;
   try {
     const raw = JSON.parse(await readFile(SESSION_PATH, "utf-8")) as Partial<Session>;
     if (!raw || !Array.isArray(raw.files) || !raw.files.length) return null;
-    const files = raw.files
-      .filter((f) => f && typeof f.path === "string")
-      .map((f) => ({
+    const entries = raw.files
+      .map((file, originalIndex) => ({ file, originalIndex }))
+      .filter(({ file }) => file && typeof file.path === "string" && file.path.length > 0)
+      .slice(0, 10);
+    const files = entries
+      .map(({ file: f }) => ({
         path: f.path,
         cursor: {
-          r: Math.max(0, f.cursor?.r ?? 0),
-          c: Math.max(0, f.cursor?.c ?? 0),
+          r: safeIndex(f.cursor?.r),
+          c: safeIndex(f.cursor?.c),
         },
         ...(typeof f.content === "string" ? { content: f.content } : {}),
-      }))
-      .slice(0, 10);
+      }));
     if (!files.length) return null;
-    return { files, active: Math.min(Math.max(0, raw.active ?? 0), files.length - 1) };
+    const active = entries.findIndex(entry => entry.originalIndex === safeIndex(raw.active));
+    return { files, active: active >= 0 ? active : Math.min(safeIndex(raw.active), files.length - 1) };
   } catch {
     return null;
   }

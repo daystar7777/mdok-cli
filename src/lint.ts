@@ -1,3 +1,5 @@
+import { strWidth } from "./width.js";
+
 export interface LintProblem {
   line: number; // 0-based
   col: number;
@@ -8,14 +10,24 @@ export interface LintProblem {
 /** Small markdown linter: whitespace, blank runs, heading jumps, fences. */
 export function lintMarkdown(lines: string[]): LintProblem[] {
   const out: LintProblem[] = [];
-  let inFence = false;
+  let fence: { char: string; length: number } | null = null;
   let prevLevel = 0;
   let blanks = 0;
   lines.forEach((ln, i) => {
-    if (/^(```+|~~~+)/.test(ln.trim())) inFence = !inFence;
-    if (!inFence) {
+    const marker = ln.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      if (marker && marker[1][0] === fence.char && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+      blanks = 0;
+      return;
+    }
+    if (marker && !(marker[1][0] === "`" && marker[2].includes("`"))) {
+      fence = { char: marker[1][0], length: marker[1].length };
+      blanks = 0;
+      return;
+    }
+    {
       const trail = ln.match(/[ \t]+$/);
-      if (trail && ln.trim() !== "") {
+      if (trail && ln.trim() !== "" && !/ {2}$/.test(ln)) {
         out.push({ line: i, col: ln.length - trail[0].length, rule: "trail", msg: "trailing whitespace" });
       }
       const h = ln.match(/^(#{1,6})\s+\S/);
@@ -34,7 +46,7 @@ export function lintMarkdown(lines: string[]): LintProblem[] {
       blanks = 0;
     }
   });
-  if (inFence) {
+  if (fence) {
     out.push({ line: Math.max(0, lines.length - 1), col: 0, rule: "fence", msg: "unclosed code fence" });
   }
   return out;
@@ -45,8 +57,21 @@ export function formatMd(lines: string[]): { lines: string[]; fixes: number } {
   let fixes = 0;
   const out: string[] = [];
   let blanks = 0;
+  let fence: { char: string; length: number } | null = null;
   for (const ln of lines) {
-    const t = ln.replace(/[ \t]+$/, "");
+    const marker = ln.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      out.push(ln);
+      if (marker && marker[1][0] === fence.char && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+      blanks = 0;
+      continue;
+    }
+    if (marker) {
+      fence = { char: marker[1][0], length: marker[1].length };
+      out.push(ln); blanks = 0; continue;
+    }
+    // Indented code and two-space Markdown hard breaks carry meaning.
+    const t = /^( {4}|\t)/.test(ln) || /\S.* {2}$/.test(ln) ? ln : ln.replace(/[ \t]+$/, "");
     if (t !== ln) fixes += 1;
     if (t.trim() === "") {
       blanks += 1;
@@ -63,11 +88,18 @@ export function formatMd(lines: string[]): { lines: string[]; fixes: number } {
 }
 
 function splitPipeRow(line: string): string[] {
-  return line
-    .trim()
-    .replace(/^\||\|$/g, "")
-    .split("|")
-    .map((c) => c.trim());
+  const input = line.trim(), cells: string[] = [];
+  let cell = "", slashes = 0, lastDelimiter = false;
+  for (const ch of input) {
+    lastDelimiter = ch === "|" && slashes % 2 === 0;
+    if (lastDelimiter) { cells.push(cell); cell = ""; }
+    else cell += ch;
+    slashes = ch === "\\" ? slashes + 1 : 0;
+  }
+  cells.push(cell);
+  if (input.startsWith("|")) cells.shift();
+  if (lastDelimiter) cells.pop();
+  return cells.map(c => c.trim());
 }
 
 function isSepCell(c: string): boolean {
@@ -127,13 +159,16 @@ export function formatTable(lines: string[], row: number): { lines: string[]; ch
   while (bot < lines.length - 1 && lines[bot + 1].includes("|")) bot += 1;
   const block = lines.slice(top, bot + 1).map(splitPipeRow);
   if (block.length < 1) return { lines, changed: false };
+  // Uneven rows can contain ignored cells under GFM. Do not turn those into
+  // visible data, consume a separator as body text, or silently remove content.
+  if (block.some(cells => cells.length !== block[0].length)) return { lines, changed: false };
   const ncols = Math.max(...block.map((r) => r.length));
   const norm = block.map((r) => {
     const a = [...r];
     while (a.length < ncols) a.push("");
     return a.slice(0, ncols);
   });
-  let align: Array<"left" | "center" | "right"> = Array(ncols).fill("left");
+  let align: Array<"none" | "left" | "center" | "right"> = Array(ncols).fill("none");
   let body = norm;
   if (norm.length > 1 && norm[1].every(isSepCell)) {
     align = norm[1].map((c) =>
@@ -141,23 +176,23 @@ export function formatTable(lines: string[], row: number): { lines: string[]; ch
         ? "center"
         : c.endsWith(":")
           ? "right"
-          : "left",
+          : c.startsWith(":") ? "left" : "none",
     );
     body = [norm[0], ...norm.slice(2)];
   }
   const widths = Array.from({ length: ncols }, (_, c) =>
-    Math.max(1, ...body.map((r) => r[c].length)),
+    Math.max(1, ...body.map((r) => strWidth(r[c]))),
   );
   const cell = (s: string, c: number) => {
     const w = widths[c];
     const a = align[c];
-    if (a === "right") return s.padStart(w);
+    if (a === "right") return " ".repeat(Math.max(0, w - strWidth(s))) + s;
     if (a === "center") {
-      const gap = Math.max(0, w - s.length);
+      const gap = Math.max(0, w - strWidth(s));
       const left = Math.floor(gap / 2);
       return " ".repeat(left) + s + " ".repeat(gap - left);
     }
-    return s.padEnd(w);
+    return s + " ".repeat(Math.max(0, w - strWidth(s)));
   };
   const fmtRow = (r: string[]) => `| ${r.map(cell).join(" | ")} |`;
   const sepRow =
@@ -168,15 +203,13 @@ export function formatTable(lines: string[], row: number): { lines: string[]; ch
           ? `:${"-".repeat(w)}:`
           : align[c] === "right"
             ? `${"-".repeat(w + 1)}:`
-            : `:${"-".repeat(w + 1)}`,
+            : align[c] === "left" ? `:${"-".repeat(w + 1)}` : "-".repeat(Math.max(3, w + 2)),
       )
       .join("|") +
     "|";
   const next = [...lines];
   const formatted = [fmtRow(body[0]), sepRow, ...body.slice(1).map(fmtRow)];
-  formatted.forEach((ln, i) => {
-    next[top + i] = ln;
-  });
+  next.splice(top, bot - top + 1, ...formatted);
   const changed = formatted.some((ln, i) => ln !== lines[top + i]);
   return { lines: next, changed };
 }

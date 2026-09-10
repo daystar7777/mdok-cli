@@ -38,7 +38,7 @@ close. The payload is compressed, **not encrypted**, and needs an MDOK1
 receiver (receiver UI is not yet included). [Format and limits](docs/qr-transfer.md).
 
 ```sh
-mdok README.md      # open (restores other session tabs too)
+mdok README.md      # open only this file
 mdok                # resume last session
 mdok view README.md # non-interactive pretty-print (pipes, scripts)
 mdok README.md | less

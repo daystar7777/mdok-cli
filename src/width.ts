@@ -1,7 +1,16 @@
-/** Display width of a single character: East Asian wide/fullwidth = 2. */
+const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+export function* graphemes(s: string): Generator<string> {
+  for (const { segment } of segmenter.segment(s)) yield segment;
+}
+
+/** Display width of a grapheme: common emoji clusters occupy two cells. */
 export function charWidth(ch: string): number {
+  if (/\p{Emoji_Presentation}/u.test(ch) || (/\p{Extended_Pictographic}/u.test(ch) && /[\u200d\ufe0f]/u.test(ch)) || /[0-9#*]\ufe0f?\u20e3/u.test(ch)) return 2;
+  if (Array.from(ch).length > 1) {
+    return Array.from(ch).reduce((width, cp) => width + charWidth(cp), 0);
+  }
   const cp = ch.codePointAt(0) ?? 0;
-  if (cp === 0) return 0;
+  if (cp < 32 || (cp >= 0x7f && cp <= 0x9f) || /\p{Mark}/u.test(ch) || cp === 0x200d || cp === 0x200c) return 0;
   // Combining marks / variation selectors / zero-width
   if (
     (cp >= 0x0300 && cp <= 0x036f) ||
@@ -45,7 +54,7 @@ export function charWidth(ch: string): number {
 /** Display width of a string (counts UTF-16 surrogate pairs once). */
 export function strWidth(s: string): number {
   let w = 0;
-  for (const ch of s) w += charWidth(ch);
+  for (const ch of graphemes(s)) w += charWidth(ch);
   return w;
 }
 
@@ -66,12 +75,14 @@ export function sliceByWidth(s: string, startCol: number, maxWidth: number): Wid
   let ti = 0; // UTF-16 offset
   let startIdx = -1;
   let endIdx = -1;
-  for (const ch of s) {
+  let selectedWidth = 0;
+  for (const ch of graphemes(s)) {
     const w = charWidth(ch);
-    if (startIdx < 0 && col + w > startCol) startIdx = ti;
+    if (startIdx < 0 && (col + w > startCol || (startCol === 0 && col === 0))) startIdx = ti;
     if (startIdx >= 0) {
-      if (col >= startCol + maxWidth) break;
+      if (selectedWidth + w > maxWidth || col >= startCol + maxWidth) break;
       endIdx = ti + ch.length;
+      selectedWidth += w;
     }
     col += w;
     ti += ch.length;
@@ -79,20 +90,27 @@ export function sliceByWidth(s: string, startCol: number, maxWidth: number): Wid
   if (startIdx < 0) {
     return { text: "", startIdx: s.length, endIdx: s.length, startCol: col, endCol: col };
   }
+  endIdx = Math.max(startIdx, endIdx);
   const text = s.slice(startIdx, endIdx);
   return { text, startIdx, endIdx, startCol, endCol: startCol + strWidth(text) };
 }
 
 /** Visual column of a UTF-16 offset within s. */
 export function colOfIndex(s: string, idx: number): number {
-  return strWidth(s.slice(0, Math.max(0, Math.min(idx, s.length))));
+  let offset = 0, col = 0;
+  for (const ch of graphemes(s)) {
+    if (offset + ch.length > idx) break;
+    offset += ch.length;
+    col += charWidth(ch);
+  }
+  return col;
 }
 
 /** UTF-16 offset at (nearest to) a visual column within s. */
 export function indexOfCol(s: string, col: number): number {
   let c = 0;
   let i = 0;
-  for (const ch of s) {
+  for (const ch of graphemes(s)) {
     const w = charWidth(ch);
     if (c + w > col) break;
     c += w;

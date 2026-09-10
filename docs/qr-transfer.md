@@ -31,7 +31,15 @@ preserves the current buffer, not arbitrary original binary file encoding.
 All documents, even single-frame ones, use the same envelope.
 
 Source content is limited to 1 MiB UTF-8 and transfers to 4096 frames. QR
-versions 3–10 with error correction L are selected according to screen size.
+versions 3–40 with error correction L are selected according to screen size.
+The header reserves only the digits needed for this transfer's frame count.
+Increasing the terminal height before opening QR can substantially reduce the
+number of frames. The MDOK1 wire format remains unchanged.
+
+Space toggles automatic playback; mouse reports coalesced with a key do not
+discard that key. Key-repeat/release events do not repeatedly toggle playback.
+Color-disabled terminals use literal half-block glyphs instead of colored cells.
+Real camera readability still depends on terminal font, line spacing and scale.
 The hash detects accidental corruption, not malicious sender impersonation.
 Anyone who captures the QR frames can read the document.
 

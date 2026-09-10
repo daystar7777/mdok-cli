@@ -72,30 +72,37 @@ export async function chatCompletionStream(
   const dec = new TextDecoder();
   let buf = "";
   let full = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    const parts = buf.split("\n");
-    buf = parts.pop() ?? "";
-    for (const part of parts) {
-      const line = part.trim();
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-      try {
-        const delta = (JSON.parse(data) as {
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const parts = buf.split("\n");
+      buf = parts.pop() ?? "";
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (!data) continue;
+        if (data === "[DONE]") {
+          if (!full.trim()) throw new Error("LLM returned empty response");
+          return full;
+        }
+        let parsed: {
           choices?: Array<{ delta?: { content?: string } }>;
-        }).choices?.[0]?.delta?.content;
+        };
+        try { parsed = JSON.parse(data); }
+        catch { throw new Error("LLM returned malformed stream JSON"); }
+        const delta = parsed.choices?.[0]?.delta?.content;
         if (delta) {
           full += delta;
           onToken(delta);
         }
-      } catch {
-        // partial JSON at chunk edge — next read completes it
-        buf = `${part}\n${buf}`;
       }
     }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
   if (!full.trim()) throw new Error("LLM returned empty response");
   return full;

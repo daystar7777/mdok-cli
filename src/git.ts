@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { relative, resolve, isAbsolute } from "node:path";
 
 function sh(file: string, args: string[], cwd: string, timeout = 15000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -12,6 +13,19 @@ function sh(file: string, args: string[], cwd: string, timeout = 15000): Promise
 /** Parse `git status --porcelain=v1` output: path -> short status. Pure, tested. */
 export function parseGitPorcelain(out: string): Map<string, string> {
   const m = new Map<string, string>();
+  if (out.includes("\0")) {
+    const records = out.split("\0");
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i];
+      if (record.length < 4) continue;
+      const x = record[0], y = record[1];
+      const st = y !== " " && y !== "?" ? y : x;
+      m.set(record.slice(3), st === "?" ? "??" : st);
+      // -z emits destination first, then source as a separate NUL record.
+      if (/[RC]/.test(x + y)) i++;
+    }
+    return m;
+  }
   for (const ln of out.split("\n")) {
     if (ln.length < 4) continue;
     const x = ln[0];
@@ -31,7 +45,7 @@ export function parseGitPorcelain(out: string): Map<string, string> {
 /** Status of worktree files relative to cwd (empty map outside a repo). */
 export function gitStatus(cwd: string): Promise<Map<string, string>> {
   return new Promise((resolve) => {
-    execFile("git", ["status", "--porcelain=v1", "-uall"], { cwd, timeout: 5000 }, (err, stdout) => {
+    execFile("git", ["status", "--porcelain=v1", "-z", "-uall"], { cwd, timeout: 5000 }, (err, stdout) => {
       if (err) {
         resolve(new Map());
         return;
@@ -97,6 +111,16 @@ export async function gitSyncState(root: string): Promise<GitSyncState | null> {
 export async function gitCommitAll(root: string, msg: string): Promise<void> {
   await sh("git", ["add", "-A"], root);
   await sh("git", ["-c", "user.name=mdok", "-c", "user.email=mdok@local", "commit", "-qm", msg], root);
+}
+
+/** Commit only the saved file, preserving unrelated staged/unstaged changes. */
+export async function gitCommitFile(root: string, path: string, msg: string): Promise<void> {
+  const rel = relative(resolve(root), resolve(path));
+  if (!rel || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
+    throw new Error("File is outside the repository");
+  }
+  await sh("git", ["--literal-pathspecs", "add", "--", rel], root);
+  await sh("git", ["--literal-pathspecs", "-c", "user.name=mdok", "-c", "user.email=mdok@local", "commit", "--only", "-qm", msg, "--", rel], root);
 }
 
 export async function gitPullRebase(root: string): Promise<string> {

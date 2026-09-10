@@ -31,7 +31,7 @@ QR로 표시합니다. 방향키로 이동, Space로 자동 순환, Esc로 닫�
 아직 포함되지 않았습니다. [전송 형식과 한도](docs/qr-transfer.md).
 
 ```sh
-mdok README.md      # 열기 (세션의 다른 탭도 같이 복원)
+mdok README.md      # 지정한 파일만 열기
 mdok                # 마지막 세션 이어하기
 mdok view README.md # 비대화형 예쁘게 출력 (파이프, 스크립트용)
 mdok README.md | less

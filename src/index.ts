@@ -38,7 +38,7 @@ const program = new Command();
 program
   .name("mdok")
   .description("Markdown OK — pretty CLI viewer + LLM analysis (BYOK)")
-  .version("0.1.2");
+  .version("0.1.3");
 
 program
   .command("view")
@@ -150,7 +150,7 @@ program
     }
   });
 
-// Default: TUI. `mdok <file>` opens it (plus restores other session tabs);
+// Default: TUI. `mdok <file>` opens only the requested file;
 // bare `mdok` resumes the session. Piped output pretty-prints one file.
 program.argument("[file]", "markdown file to open in TUI").action(async (file?: string) => {
   const interactive = process.stdin.isTTY && process.stdout.isTTY;
@@ -171,6 +171,7 @@ program.argument("[file]", "markdown file to open in TUI").action(async (file?: 
   interface Tab {
     path: string;
     content: string;
+    baseline?: string;
     cursor?: { r: number; c: number };
   }
   const readOne = async (p: string): Promise<Tab | null> => {
@@ -183,7 +184,7 @@ program.argument("[file]", "markdown file to open in TUI").action(async (file?: 
       return null;
     }
   };
-  const sess = await loadSession();
+  const sess = file ? null : await loadSession();
   const tabs: Tab[] = [];
   if (file) {
     const one = await readOne(file);
@@ -197,7 +198,8 @@ program.argument("[file]", "markdown file to open in TUI").action(async (file?: 
     for (const f of sess.files) {
       if (tabs.some((t) => t.path === f.path) || tabs.length >= 10) continue;
       if (f.content !== undefined) {
-        tabs.push({ path: f.path, content: f.content, cursor: f.cursor });
+        const disk = await readOne(f.path);
+        tabs.push({ path: f.path, content: f.content, baseline: disk?.content ?? "", cursor: f.cursor });
         continue;
       }
       const one = await readOne(f.path);
