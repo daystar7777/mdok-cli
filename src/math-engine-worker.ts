@@ -1,5 +1,6 @@
 import {parentPort,workerData as d} from 'node:worker_threads';
 import katex from 'katex';
+import {katexStrict} from './math-policy.js';
 import {mathjax} from '@mathjax/src/js/mathjax.js';
 import {TeX} from '@mathjax/src/js/input/tex.js';
 import {SVG} from '@mathjax/src/js/output/svg.js';
@@ -13,7 +14,7 @@ import '@mathjax/src/js/input/tex/configmacros/ConfigMacrosConfiguration.js';
 try {
   let check:(body:string,display:boolean)=>void;
   if(d.engine==='katex') {
-    check=(body,display)=>{katex.renderToString(body,{displayMode:display,throwOnError:true,trust:false,maxExpand:500,maxSize:20,strict:'error',macros:{...d.macros}});};
+    check=(body,display)=>{katex.renderToString(body,{displayMode:display,throwOnError:true,trust:false,maxExpand:500,maxSize:20,strict:katexStrict,macros:{...d.macros}});};
   } else {
     RegisterHTMLHandler(liteAdaptor());
     check=(body,display)=>{

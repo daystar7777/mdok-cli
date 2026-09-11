@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import chalk from "chalk";
 import { qrInputAction } from "./qr-input.js";
+import {installedDesktop,openDesktop} from './desktop-open.js';
 import { paneWidths } from "./layout.js";
 import {ExplorerView,type ExplorerMouse} from './explorer-view.js';
 import {readExplorerFile,createMarkdown,type ExplorerLocation} from './explorer.js';
@@ -284,6 +285,12 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const [pvTop, setPvTop] = useState(0);
   const [focus, setFocus] = useState<Focus>("preview");
   const [msg, setMsg] = useState("");
+  const [desktopPath,setDesktopPath]=useState<string|null>(null);
+  useEffect(()=>{
+    let alive=true;const check=()=>{void installedDesktop().then(path=>{if(alive)setDesktopPath(path);});};
+    check();const timer=setInterval(check,15000);
+    return()=>{alive=false;clearInterval(timer);};
+  },[]);
   const [quitArmed, setQuitArmed] = useState(false);
   const closeArmed = useRef<{ path: string; content: string } | null>(null);
   const [leader, setLeader] = useState(false);
@@ -1217,6 +1224,10 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     else if (id === "find") void a.openOverlayKind("find");
     else if (id === "file") void a.openOverlayKind("file");
     else if (id === "explore") void a.openOverlayKind("explore");
+    else if (id === 'desktop'&&desktopPath) {
+      if(dirty){setMsg(t('desktop.saveFirst'));return;}
+      void openDesktop(curFile,{app:desktopPath}).then(()=>setMsg(t('desktop.requested'))).catch(e=>{setMsg(String(e));void installedDesktop().then(setDesktopPath);});
+    }
     else if (id === "qr") void a.openOverlayKind("qr");
     else if (id === "shell") toggleShell();
     else if (id === "set") void a.openOverlayKind("settings");
@@ -2365,10 +2376,12 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const viewBtnLabel = `[${viewMode === "split" ? t("btn.split") : viewMode === "source" ? t("btn.src") : t("btn.view")}]`;
   const menuBtn = "[>]"; // toggles the sidebar
   const fullRight: Array<[string, string]> = [["explore", "Explore"], ["ask", t("btn.ask")], ["find", t("btn.find")], ["file", t("btn.file")], ["qr", "QR"], ["shell", t("btn.shell")], ["set", t("btn.set")], ["help", t("btn.help")], ["quit", t("btn.quit")]];
+  if(desktopPath)fullRight.unshift(['desktop',t('btn.desktop')]);
   const leftFixed = menuBtn.length + 1 + 5 + strWidth(viewBtnLabel) + 1;
   const fullRightWidth = fullRight.reduce((a, [, l]) => a + strWidth(l) + 3, 0);
   const compact = cols < leftFixed + fullRightWidth + 14;
   const rightDefs: Array<[string, string]> = compact ? [["explore", "Explore"], ["qr", "QR"], ["quit", "X"]] : fullRight;
+  if(compact&&desktopPath)rightDefs.unshift(['desktop','App']);
   const rightWidth = rightDefs.reduce((a, [, l]) => a + strWidth(l) + 3, 0);
   const fileMax = Math.max(0, cols - leftFixed - rightWidth - 1 - (dirty?2:0));
   let shownFile = curFile;

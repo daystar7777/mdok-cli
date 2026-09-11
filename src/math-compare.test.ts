@@ -52,6 +52,10 @@ test('conversion never changes inline/display kind',()=>{
   assert.equal(planDelimiterConversion('$x$\n\n$$y$$','bracket').result,'\\(x\\)\n\n\\[y\\]');
 });
 for(const engine of ['katex','mathjax'] as const){
+  test(`${engine}: Korean text and identifiers are not unknown TeX commands`,async()=>{
+    const result=await checkMath(String.raw`$\text{속도}=\frac{거리}{시간}$`,engine);
+    assert.equal(result.partial,false);assert.deepEqual(result.diagnostics,[]);
+  });
   test(`${engine}: real engine accepts fractions, Greek, ams matrix`,async()=>{
     const result=await checkMath(String.raw`$$\frac{1}{2}+\alpha+\begin{matrix}a&b\\c&d\end{matrix}$$`,engine);
     assert.equal(result.partial,false,JSON.stringify(result));assert.deepEqual(result.diagnostics,[]);assert.match(result.engine,/\d+\.\d+/);

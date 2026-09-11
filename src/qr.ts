@@ -2,6 +2,7 @@ import QRCode from "qrcode";
 import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
+import { qrFrames } from './qr-frames.js';
 
 export interface QrTransfer { frames: string[]; version: number; name: string; bytes: number }
 
@@ -19,25 +20,7 @@ export function createQrTransfer(path: string, content: string, columns: number,
   if (version < 3) throw new Error("size");
   // Reserve only the actual index digit count, not 4096 on every small transfer.
   // Explicit byte mode yields a safe content-independent capacity bound.
-  let count = 1, capacity = 0;
-  for (;;) {
-    let low = 0, high = 3000;
-    while (low < high) {
-      const mid = Math.ceil((low + high) / 2);
-      try {
-        QRCode.create([{ data: Buffer.from(`MDOK1:${id}:${count}:${count}:${"a".repeat(mid)}`), mode: "byte" }], { version, errorCorrectionLevel: "L" });
-        low = mid;
-      } catch { high = mid - 1; }
-    }
-    if (!low) throw new Error("size");
-    capacity = low;
-    const next = Math.ceil(encoded.length / capacity);
-    if (String(next).length <= String(count).length) { count = next; break; }
-    count = next;
-  }
-  if (count > 4096) throw new Error("limit");
-  return { name, bytes, version, frames: Array.from({ length: count }, (_, i) =>
-    `MDOK1:${id}:${i + 1}:${count}:${encoded.slice(i * capacity, (i + 1) * capacity)}`) };
+  return { name, bytes, version, frames: qrFrames(encoded,id,version) };
 }
 
 /** Black modules on a white background, including a four-module quiet zone. */

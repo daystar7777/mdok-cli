@@ -53,3 +53,10 @@ destination paths before writing. Never execute received content.
 Verification: `node --import tsx --test src/qr.test.ts` rasterizes the actual
 terminal blocks, decodes every frame using jsQR, and reconstructs Unicode
 content including emoji and CRLF. This does not replace a real camera test.
+# General file transfer (MDOK2)
+
+Run `mdok qr ./archive.zip` to send any regular file, up to 1 MiB, without text conversion. Use Left/Right to change frames, Space to play/pause, a frame number followed by Enter to jump, and Q/Esc to exit. Example: `mdok qr ./photo.png --frame 3` prints just frame 3 for a missing-part retry. `--version 8` selects lower QR density; `--interval 1500` changes autoplay timing in milliseconds.
+
+The desktop **Receive QR / QR 받기** dialog accepts image files and clipboard screenshots. Parts may arrive out of order; duplicates are ignored and missing numbers are shown. **Save file / 파일 저장** restores the original bytes. Non-Markdown files are never automatically opened or executed.
+
+MDOK2 uses `MDOK2:<sha256-prefix>:<index>:<count>:<chunk>`. Indices start at 1. Concatenated chunks are base64 of gzip JSON `{name,size,sha256,data}`, where `data` is base64 of the original bytes and `sha256` is their full SHA-256. The prefix is the first 16 hex characters of SHA-256 of the concatenated base64 string. Existing MDOK1 Markdown snapshots remain supported. Hashes detect corruption, not sender identity; QR data is not encrypted.

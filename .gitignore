@@ -10,3 +10,8 @@ github_key*
 *.pem
 *.swp
 .git_pass
+.server_pass
+desktop/release/
+.harness-runs/
+desktop/src-tauri/target/
+/desktop/

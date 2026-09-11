@@ -41,6 +41,27 @@ const cl = cliLang();
 const ct = (k: MsgKey, v?: Record<string, string | number>) => tr(cl, k, v);
 
 const program = new Command();
+program.command('qr <file>')
+ .description('Send any file as QR frames (up to 1 MiB) / 모든 형식의 파일 QR 전송')
+ .option('--frame <number>','Print only this frame (1-based)')
+ .option('--version <number>','QR version 3–40; default fits terminal')
+ .option('--interval <ms>','Autoplay interval','1200')
+ .action(async(file:string,options:{frame?:string;version?:string;interval:string})=>{try{await(await import('./qr-file.js')).runFileQr(file,options);}catch(e){console.error(String(e));process.exitCode=1;}});
+program.command('desktop [file]')
+  .description('Open a local Markdown file in mdok desktop / 데스크톱으로 열기')
+  .option('--app <path>','Path to mdok.app')
+  .action(async(file:string|undefined,opts:{app?:string})=>{
+    try{const {openDesktop}=await import('./desktop-open.js');const r=await openDesktop(file,opts);console.log(`mdok: open requested${r.path?' — '+r.path:''}`);}
+    catch(e){console.error(String(e));process.exitCode=1;}
+  });
+program.command('mcp')
+  .description('Local desktop MCP server (stdio)')
+  .requiredOption('--root <directory...>','Explicitly allowed Markdown directories')
+  .option('--app <path>','Path to mdok.app')
+  .action(async(opts:{root:string[];app?:string})=>{
+    try{const {serveDesktop}=await import('./desktop-mcp.js');await serveDesktop(opts.root,opts.app);}
+    catch(e){console.error(String(e));process.exitCode=1;}
+  });
 program.helpOption("-h, --help", ct("cli.helpHelp"));
 program.addHelpCommand(false);
 program.configureHelp({
@@ -54,7 +75,7 @@ program.configureHelp({
 program
   .name("mdok")
   .description(ct("cli.description"))
-  .version("0.1.9", "-V, --version", ct("cli.versionHelp"));
+  .version("0.1.10", "-V, --version", ct("cli.versionHelp"));
 
 program
   .command("view")

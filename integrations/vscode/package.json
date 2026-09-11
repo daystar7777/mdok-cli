@@ -1,0 +1,14 @@
+{
+  "name":"mdok-open", "displayName":"Open in mdok", "description":"Open local Markdown documents in the mdok desktop reader.",
+  "version":"0.1.0", "publisher":"daystar7777", "license":"MIT", "engines":{"vscode":"^1.85.0"},
+  "main":"./extension.cjs", "extensionKind":["ui"],
+  "contributes":{
+    "commands":[{"command":"mdok.open","title":"mdok: Open in Desktop / 데스크톱으로 열기"}],
+    "menus":{
+      "explorer/context":[{"command":"mdok.open","when":"resourceScheme == file && resourceExtname =~ /\\.(md|markdown)$/i","group":"navigation"}],
+      "editor/title":[{"command":"mdok.open","when":"resourceScheme == file && resourceLangId == markdown","group":"navigation"}]
+    },
+    "configuration":{"title":"mdok","properties":{"mdok.appPath":{"type":"string","default":"","scope":"machine","description":"Optional absolute path to mdok.app. Defaults to /Applications/mdok.app or ~/Applications/mdok.app."}}}
+  },
+  "capabilities":{"untrustedWorkspaces":{"supported":false},"virtualWorkspaces":{"supported":false}}
+}
