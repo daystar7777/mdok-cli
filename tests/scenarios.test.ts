@@ -140,7 +140,7 @@ test("session filtering preserves identity of the originally active valid tab", 
 
 test("concurrent session writes produce one complete snapshot", () => isolated(async dir => {
   const session = await sessionModule(dir);
-  const snapshots = Array.from({ length: 12 }, (_, i) => ({ files: [{ path: `${i}.md`, cursor: { r: 0, c: 0 }, content: "가".repeat(10000) }], active: 0 }));
+  const snapshots = Array.from({ length: 12 }, (_, i) => ({ files: [{ path: `${i}.md`, cursor: { r: 0, c: 0 }, content: "가".repeat(10000),diskToken:null }], active: 0 }));
   await Promise.all(snapshots.map(value => session.saveSession(value)));
   const loaded = await session.loadSession();
   assert.ok(snapshots.some(value => JSON.stringify(value) === JSON.stringify(loaded)));

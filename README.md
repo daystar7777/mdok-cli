@@ -1,5 +1,10 @@
 # mdok — Markdown OK
 
+0.1.11 adds guarded saves, external-change policies, opt-in original-file auto-save,
+isolated recovery snapshots and a reading/updating indicator. **Ctrl+O u** opens
+Reload / Compare / Save copy. Auto-save defaults **OFF**; external changes default
+to **Ask**. [File safety and recovery](docs/file-safety.md).
+
 0.1.7 adds local math diagnostics (KaTeX/MathJax), safe delimiter conversion and Markdown-aware/Git comparison. **Ctrl+O M**: math tools; **Ctrl+O D**: compare. [Usage and limits](docs/math-tools.md).
 
 Since 0.1.6, TUI starts in **View**. Press **Enter** in the document to enter split editing (source + preview). Enter still inserts a newline while editing; menus and input fields keep their normal Enter behavior.
@@ -60,6 +65,9 @@ mdok export README.md -o out.html
 # config (all of these are also editable in-TUI via ^O c)
 mdok config --url https://api.openai.com/v1 --model gpt-4o-mini
 mdok config --key sk-... --theme ocean --git on --lang ko
+mdok config --external-changes ask --auto-save off
+mdok recover       # list independent unsaved-session backups
+mdok recover <id>  # reopen a selected backup in the TUI
 ```
 
 Config lives at `~/.mdok.json` (`MDOK_API_KEY`, `MDOK_BASE_URL`, `MDOK_MODEL`,
@@ -88,6 +96,7 @@ Config lives at `~/.mdok.json` (`MDOK_API_KEY`, `MDOK_BASE_URL`, `MDOK_MODEL`,
 | `Ctrl+O`, `v` | cycle Split / Source / View |
 | `Ctrl+O`, `b` | toggle sidebar (Recent · Outline · Cwd files) |
 | `Ctrl+O`, `f` | file menu (Save · New · Open… · Run… · Export HTML · Close tab) |
+| `Ctrl+O`, `u` | external changes: reload, compare, keep, save a separate copy |
 | `Ctrl+O`, `a` | ask LLM about open files, streams into preview (`Esc` cancels) |
 | `Ctrl+O`, `R` | AI rewrite selection, diff accept/reject |
 | `Ctrl+O`, `/` | find; `Tab` = replace field, `Enter` = search/replace, `n`/`N` next/prev |

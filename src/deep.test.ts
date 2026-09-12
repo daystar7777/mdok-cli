@@ -18,20 +18,37 @@ async function isolated(run: (dir: string) => Promise<void>) {
   try { await run(dir); } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
-async function isolatedSession(dir: string) {
+async function isolatedSession(dir: string,instance='') {
   // Redirect only the module's session path; never change HOME or access user data.
   const source = (await readFile(new URL("./session.ts", import.meta.url), "utf8"))
     .replace('join(homedir(), ".mdok-session.json")', JSON.stringify(join(dir, "session.json")))
     .replace('"./atomic.js"', JSON.stringify(new URL("./atomic.ts", import.meta.url).href));
   const ts = await import("typescript");
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-  return import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+  return import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}#${instance}`);
 }
+
+test('independent TUI recovery snapshots survive another session writing or clearing the workspace',()=>isolated(async dir=>{
+  const first=await isolatedSession(dir,'first'),second=await isolatedSession(dir,'second');
+  const a={files:[{path:'a.md',cursor:{r:0,c:0},content:'Draft one',diskToken:'a'.repeat(64)}],active:0};
+  const b={files:[{path:'a.md',cursor:{r:0,c:0},content:'Draft two',diskToken:'b'.repeat(64)}],active:0};
+  await first.saveSession(a);await second.saveSession(b);
+  const sessions=await first.recoverySessions();assert.equal(sessions.length,2);
+  assert.deepEqual(sessions.map((e:any)=>e.session.files[0].content).sort(),['Draft one','Draft two']);
+  await second.saveSession({files:[{path:'a.md',cursor:{r:0,c:0}}],active:0});
+  assert.equal((await first.recoverySessions()).length,1);assert.equal((await first.recoverySessions())[0].session.files[0].content,'Draft one');
+}));
+
+test('legacy recovery without a disk token remains untrusted',()=>isolated(async dir=>{
+  const session=await isolatedSession(dir);
+  await writeFile(join(dir,'session.json'),JSON.stringify({files:[{path:'a.md',cursor:{r:0,c:0},content:'old draft',diskToken:'invalid'}],active:0}));
+  assert.equal((await session.loadSession()).files[0].diskToken,null);
+}));
 
 test("session async/sync persistence retains large unsaved buffers and cursors", () => isolated(async dir => {
   const session = await isolatedSession(dir);
   assert.equal(await session.loadSession(), null);
-  const value = { files: [{path:"한글.md",cursor:{r:2,c:3},content:"가😀".repeat(100001)}, {path:"empty.md",cursor:{r:0,c:0},content:""}], active:1 };
+  const value = { files: [{path:"한글.md",cursor:{r:2,c:3},content:"가😀".repeat(100001),diskToken:'a'.repeat(64)}, {path:"empty.md",cursor:{r:0,c:0},content:"",diskToken:null}], active:1 };
   await session.saveSession(value);
   assert.deepEqual(await session.loadSession(), value);
   session.saveSessionSync({...value,active:0});

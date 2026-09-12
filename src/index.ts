@@ -11,14 +11,15 @@ import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { writeFileAtomic } from "./atomic.js";
+import {documentPath,inspectDisk,guardedWrite,type DiskToken} from './file-safety.js';
 import { tr, normalizeLang, type MsgKey } from "./i18n.js";
-import { join } from "node:path";
+import { join,resolve } from "node:path";
 import chalk from "chalk";
 import { renderMarkdown } from "./render.js";
 import { buildPrompt, chatCompletion } from "./llm.js";
 import { lintMarkdown } from "./lint.js";
 import { markdownToHtml } from "./html.js";
-import { loadSession } from "./session.js";
+import { loadSession,recoverySessions } from "./session.js";
 import {
   loadConfig,
   saveConfig,
@@ -41,6 +42,23 @@ const cl = cliLang();
 const ct = (k: MsgKey, v?: Record<string, string | number>) => tr(cl, k, v);
 
 const program = new Command();
+program.command('recover [id]').description('List isolated unsaved-session backups, or recover one by ID')
+  .action(async(id?:string)=>{
+    try{
+      const entries=await recoverySessions();
+      if(!id){for(const entry of entries)console.log(`${entry.id}  ${entry.session.files.filter(f=>f.content!==undefined).length} unsaved document(s)`);if(!entries.length)console.log('No unsaved recovery sessions.');return;}
+      if(!process.stdin.isTTY||!process.stdout.isTTY)throw Error('Recovery requires an interactive terminal');
+      const entry=entries.find(e=>e.id===id);if(!entry)throw Error('Recovery ID not found');
+      const tabs=[];
+      for(const f of entry.session.files){
+        const path=await documentPath(f.path).catch(()=>resolve(f.path)),disk=await inspectDisk(path).catch(()=>null);
+        if(f.content===undefined&&disk?.content==null)continue;
+        tabs.push({path,content:f.content??disk?.content??'',baseline:disk?.content??'',diskToken:f.content!==undefined?f.diskToken??null:disk?.token??null,cursor:f.cursor});
+      }
+      if(!tabs.length)throw Error('No recoverable documents');
+      await(await import('./tui.js')).runTui(tabs,entry.session.active);
+    }catch(e){console.error(String(e));process.exitCode=1;}
+  });
 program.command('qr <file>')
  .description('Send any file as QR frames (up to 1 MiB) / 모든 형식의 파일 QR 전송')
  .option('--frame <number>','Print only this frame (1-based)')
@@ -75,7 +93,7 @@ program.configureHelp({
 program
   .name("mdok")
   .description(ct("cli.description"))
-  .version("0.1.10", "-V, --version", ct("cli.versionHelp"));
+  .version("0.1.11", "-V, --version", ct("cli.versionHelp"));
 
 program
   .command("view")
@@ -133,7 +151,9 @@ program
   .option("--theme <theme>", ct("cli.themeHelp"))
   .option("--lang <ko|en>", ct("cli.langHelp"))
   .option("--git <on|off>", ct("cli.gitHelp"))
-  .action(async (opts: { key?: string; url?: string; model?: string; theme?: string; git?: string; lang?: string }) => {
+  .option('--external-changes <ask|auto|keep>','External changes: ask, clean-only auto reload, or keep')
+  .option('--auto-save <on|off>','Auto-save the original file after 2 seconds idle (default off)')
+  .action(async (opts: { key?: string; url?: string; model?: string; theme?: string; git?: string; lang?: string; externalChanges?:string;autoSave?:string }) => {
     const patch: Record<string, string> = {};
     if (opts.key) patch.apiKey = opts.key;
     if (opts.url) patch.baseURL = opts.url;
@@ -145,10 +165,12 @@ program
       }
       patch.lang = normalizeLang(opts.lang);
     }
-    const boolPatch: { gitSync?: boolean } = {};
+    const boolPatch: { gitSync?: boolean;autoSave?:boolean;externalChanges?:'ask'|'auto'|'keep' } = {};
+    if(opts.externalChanges){if(!['ask','auto','keep'].includes(opts.externalChanges)){console.error('Use --external-changes ask|auto|keep');process.exitCode=1;return;}boolPatch.externalChanges=opts.externalChanges as 'ask'|'auto'|'keep';}
+    if(opts.autoSave){if(!['on','off'].includes(opts.autoSave)){console.error('Use --auto-save on|off');process.exitCode=1;return;}boolPatch.autoSave=opts.autoSave==='on';}
     if (opts.git) boolPatch.gitSync = opts.git !== "off" && opts.git !== "false";
     const cfg =
-      Object.keys(patch).length > 0 || opts.git
+      Object.keys(patch).length > 0 || Object.keys(boolPatch).length>0
         ? await saveConfig({ ...patch, ...boolPatch })
         : await loadConfig();
     const shown = { ...cfg, apiKey: cfg.apiKey ? "***" + cfg.apiKey.slice(-4) : "" };
@@ -213,9 +235,11 @@ program.command('math-convert').argument('<file>',ct('cli.fileArg'))
   .option('--profile <profile>','gfm | commonmark','gfm')
   .action(async(file:string,opts:{to:'dollar'|'bracket';write?:boolean;profile:MarkdownProfile})=>{
     try {
-      const text=decodeText(await readFile(file)),plan=await convertAsync(text,opts.to,undefined,opts.profile);
+      const path=await documentPath(file),disk=await inspectDisk(path);
+      if(disk.content===null)throw Error('File not found');
+      const text=disk.content,plan=await convertAsync(text,opts.to,undefined,opts.profile);
       const preview=comparisonLines(await compareAsync(text,plan.result,opts.profile),true).join('\n');
-      if(opts.write){const current=decodeText(await readFile(file));await writeFileAtomic(file,applyConversion(current,plan));}
+      if(opts.write)await guardedWrite(path,applyConversion(text,plan),disk.token);
       console.log(preview);
       if(plan.skipped)console.error(`Skipped ambiguous/incomplete math: ${plan.skipped}`);
     }catch(e){console.error((e as Error).message);process.exitCode=2;}
@@ -270,6 +294,7 @@ program.argument("[file]", ct("cli.fileArg")).action(async (file?: string) => {
     return;
   }
   interface Tab {
+    diskToken?: DiskToken;
     path: string;
     content: string;
     baseline?: string;
@@ -277,10 +302,12 @@ program.argument("[file]", ct("cli.fileArg")).action(async (file?: string) => {
   }
   const readOne = async (p: string): Promise<Tab | null> => {
     try {
-      return { path: p, content: await readFile(p, "utf-8") };
+      const path=await documentPath(p),disk=await inspectDisk(path);
+      if(disk.content===null&&p!==file)return null;
+      return {path,content:disk.content??'',diskToken:disk.token};
     } catch (err) {
       if (p === file && (err as NodeJS.ErrnoException).code === "ENOENT") {
-        return { path: p, content: "" }; // new file
+        return { path: p, content: "",diskToken:'missing' }; // new file
       }
       return null;
     }
@@ -300,7 +327,7 @@ program.argument("[file]", ct("cli.fileArg")).action(async (file?: string) => {
       if (tabs.some((t) => t.path === f.path) || tabs.length >= 10) continue;
       if (f.content !== undefined) {
         const disk = await readOne(f.path);
-        tabs.push({ path: f.path, content: f.content, baseline: disk?.content ?? "", cursor: f.cursor });
+        tabs.push({path:disk?.path??f.path,content:f.content,baseline:disk?.content??'',diskToken:f.diskToken??null,cursor:f.cursor});
         continue;
       }
       const one = await readOne(f.path);

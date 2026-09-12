@@ -1,5 +1,9 @@
 # mdok — Markdown OK
 
+0.1.11: 保存前の競合確認、外部変更の確認、任意の自動保存（既定 OFF）、
+実行ごとの復元データとプレビュー準備中の表示を追加しました。Ctrl+O u で
+再読み込み・比較・コピー保存。[詳細（韓国語・英語）](docs/file-safety.md)。
+
 0.1.7: KaTeX/MathJax による数式診断、安全な区切り文字変換、Markdown/Git 比較を追加。**Ctrl+O M**: 数式ツール、**Ctrl+O D**: 比較。[使い方と制限](docs/math-tools.md)（韓国語）。
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)

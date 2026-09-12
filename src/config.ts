@@ -19,6 +19,8 @@ export interface MdokConfig {
   lineNums: boolean;
   vimMode: boolean;
   gitSync: boolean;
+  externalChanges: 'ask'|'auto'|'keep';
+  autoSave: boolean;
 }
 
 const CONFIG_PATH = join(homedir(), ".mdok.json");
@@ -33,6 +35,8 @@ const DEFAULTS: MdokConfig = {
   lineNums: false,
   vimMode: false,
   gitSync: false,
+  externalChanges: 'ask',
+  autoSave: false,
 };
 
 export async function loadConfig(): Promise<MdokConfig> {
@@ -42,6 +46,8 @@ export async function loadConfig(): Promise<MdokConfig> {
     const merged = { ...DEFAULTS, ...JSON.parse(raw) };
     if (!Array.isArray(merged.recent)) merged.recent = [];
     if (typeof merged.theme !== "string" || !merged.theme) merged.theme = DEFAULTS.theme;
+    if(!['ask','auto','keep'].includes(merged.externalChanges))merged.externalChanges='ask';
+    merged.autoSave=merged.autoSave===true;
     return merged;
   } catch {
     return { ...DEFAULTS };

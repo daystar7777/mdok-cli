@@ -32,9 +32,10 @@ test("session builder preserves long active and inactive unsaved buffers", async
   // Exercise the actual closure without mounting a terminal or touching user sessions.
   const source = await readFile(new URL("./tui.tsx", import.meta.url), "utf8");
   const body = source.slice(source.indexOf("  const buildSession = () => ("), source.indexOf("  const quitNow ="));
-  const capture = new Function("tabs", "active", "curFile", "cursor", "lines", "baseline", body + "return buildSession();");
+  const capture = new Function("tabs", "active", "curFile", "cursor", "lines", "baseline", "diskTokens", body + "return buildSession();");
   const content = "가😀".repeat(100001);
-  const result = capture([{ path: "a.md" }, { path: "b.md", lines: [content], baseline: "old", cursor: { r: 0, c: 0 } }], 0, "a.md", { r: 0, c: 0 }, [content], "old");
+  const result = capture([{ path: "a.md" }, { path: "b.md", lines: [content], baseline: "old", cursor: { r: 0, c: 0 } }], 0, "a.md", { r: 0, c: 0 }, [content], "old", {current:new Map([['a.md','missing'],['b.md',null]])});
+  assert.equal(result.files[0].diskToken,'missing');assert.equal(result.files[1].diskToken,null);
   assert.equal(result.files[0].content, content);
   assert.equal(result.files[1].content, content);
   assert.match(source, /baseline: t\.baseline \?\? t\.content/);
