@@ -1,5 +1,9 @@
 # Sync & storage
 
+Historical design notes. The implemented behavior in 0.1.11 is documented in
+[File safety and recovery](file-safety.md); that document supersedes the old
+watcher, dirty-buffer limits and save/session descriptions below.
+
 Design stance: **plain files stay canonical**. Everything syncable must work
 with dumb folder sync (iCloud/Dropbox/Syncthing) with zero mdok involvement.
 

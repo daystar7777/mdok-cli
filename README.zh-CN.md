@@ -1,5 +1,9 @@
 # mdok — Markdown OK
 
+0.1.11：新增保存前冲突检查、外部修改提示、可选自动保存（默认关闭）、
+独立恢复副本和预览加载状态。Ctrl+O u 可重新读取、比较或另存副本。
+[详细说明（韩语及英语）](docs/file-safety.md)。
+
 0.1.7：新增 KaTeX/MathJax 公式诊断、安全的定界符转换及 Markdown/Git 比较。**Ctrl+O M**：公式工具；**Ctrl+O D**：比较。[用法和限制](docs/math-tools.md)（韩语）。
 
 [English](README.md) · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)

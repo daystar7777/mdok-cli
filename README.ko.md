@@ -1,5 +1,10 @@
 # mdok — Markdown OK
 
+0.1.11: 저장 전 충돌 확인, 외부 변경 정책, 선택형 원본 자동 저장, 실행별 복구 사본,
+읽는 중/미리보기 갱신 표시를 추가했습니다. **Ctrl+O u**에서 다시 읽기·비교·사본
+저장을 선택합니다. 자동 저장은 기본 **OFF**, 외부 변경은 기본 **확인 요청**입니다.
+[사용법과 안전 범위](docs/file-safety.md).
+
 0.1.7: KaTeX/MathJax 수식 진단, 안전한 구분자 변환, Markdown 구조·Git 비교를 추가했습니다. **Ctrl+O M** 수식 도구 / **Ctrl+O D** 비교. [사용법과 한계](docs/math-tools.md).
 
 0.1.6부터 TUI는 **뷰어 모드로 시작**합니다. 본문에서 **Enter → 소스+미리보기 분할 편집**으로 전환하며, 편집 중 Enter는 줄바꿈입니다. 메뉴/입력창의 Enter 동작은 그대로 유지됩니다.
@@ -53,6 +58,9 @@ mdok export README.md -o out.html
 # 설정 (TUI에서 ^O c로도 다 됨)
 mdok config --url https://api.openai.com/v1 --model gpt-4o-mini
 mdok config --key sk-... --theme ocean --git on --lang ko
+mdok config --external-changes ask --auto-save off
+mdok recover       # 실행별 미저장 복구 사본 목록
+mdok recover <id>  # 선택한 복구 사본을 TUI에서 열기
 ```
 
 설정은 `~/.mdok.json`에 저장 (`MDOK_API_KEY`, `MDOK_BASE_URL`, `MDOK_MODEL`,
@@ -81,6 +89,7 @@ mdok config --key sk-... --theme ocean --git on --lang ko
 | `Ctrl+O`, `v` | 분할 / 소스 / 보기 순환 |
 | `Ctrl+O`, `b` | 사이드바 토글 (최근 · 목차 · 작업폴더 파일) |
 | `Ctrl+O`, `f` | 파일 메뉴 (저장 · 새 파일 · 열기… · 실행… · HTML 내보내기 · 탭 닫기) |
+| `Ctrl+O`, `u` | 외부 변경 확인: 다시 읽기·비교·유지·별도 사본 저장 |
 | `Ctrl+O`, `a` | 열린 파일에 LLM 질문, 프리뷰에 스트리밍 (`Esc` 취소) |
 | `Ctrl+O`, `R` | 선택영역 AI 고쳐쓰기, diff 보고 적용/버리기 |
 | `Ctrl+O`, `/` | 찾기; `Tab` = 바꾸기 칸, `Enter` = 찾기/바꾸기, `n`/`N` 다음/이전 |

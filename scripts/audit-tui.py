@@ -32,6 +32,9 @@ def run(name, actions, verify, mode='plain', width=120, lang=None, override=None
             if '[View]' in initial or '[보기]' in initial: break
             initial+=drain(0.25)
         check('[View]' in initial or '[보기]' in initial,'TUI did not start in viewer mode')
+        directory_match=re.search(r'AUDIT_DIRECTORY=([^\r\n]+)',output.decode('utf8','replace'))
+        fixture_dir=Path(directory_match.group(1)) if directory_match else None
+        initial+=drain(0.2) # Allow mount-time input subscriptions to settle on busy CI hosts.
         # Existing editor regressions now explicitly enter editing first.
         if start_edit:
             os.write(master,b'\r')
@@ -43,10 +46,18 @@ def run(name, actions, verify, mode='plain', width=120, lang=None, override=None
         screens.append(initial)
         for action in actions:
             if isinstance(action,dict):
-                if 'click' in action:
+                if any(k in action for k in ('disk','replace','delete')):
+                    check(fixture_dir is not None and fixture_dir.name.startswith('mdok-ui-audit-'),'Unsafe fixture target')
+                    target=fixture_dir/'a.md'
+                    if 'delete' in action: target.unlink()
+                    elif 'replace' in action:
+                        temporary=fixture_dir/'external-replacement.tmp';temporary.write_text(action['replace']);temporary.replace(target)
+                    else: target.write_text(action['disk'])
+                elif 'wait_only' in action: pass
+                elif 'click' in action:
                     import unicodedata
                     label=action['click']
-                    rows=screens[-1].splitlines()
+                    rows=final_frame(screens[-1]).splitlines()
                     row=next(i for i,line in enumerate(rows) if label in line)
                     before=rows[row].split(label)[0]
                     col=sum(0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in ('W','F') else 1 for c in before)+2
@@ -106,6 +117,23 @@ if sys.platform=='darwin':
     run('desktop installed shows button',[],lambda d,s:check('[Desktop]' in ''.join(s),'desktop button missing'),mode='desktop')
     run('desktop narrow shows App',[],lambda d,s:check('[App]' in ''.join(s),'compact app button missing'),mode='desktop',width=60)
     run('desktop dirty refuses opening',['X',{'click':'[Desktop]','wait':0.5}],lambda d,s:check('Save changes first' in ''.join(s),'dirty file not guarded'),mode='desktop')
+run('preview identical document tabs stay visible',[{'key':'\x0f2','wait':0.8},{'key':'\x0f1','wait':0.8}],lambda d,s:check(all('ALPHA line 1' in final_frame(frame) and '[View]' in final_frame(frame) for frame in s[1:]),'identical-content tab left preview blank'),mode='same-preview',start_edit=False)
+run('safety default asks and preserves clean buffer',[{'disk':'EXTERNAL','wait':1.3}],lambda d,s:check(d['a']=='EXTERNAL' and 'ALPHA' in final_frame(s[-1]) and 'Disk changed' in final_frame(s[-1]),'clean buffer silently reloaded'),mode='safety')
+run('safety manual save blocks external overwrite',['X',{'disk':'EXTERNAL','wait':1.3},'\x13'],lambda d,s:check(d['a']=='EXTERNAL' and buffer(d).startswith('XALPHA'),'external file or edits overwritten'),mode='safety')
+run('safety atomic replacements keep being detected',[{'replace':'EXTERNAL ONE','wait':1.3},{'replace':'EXTERNAL TWO','wait':1.3}],lambda d,s:check('EXTERNAL ONE' in final_frame(s[-2]) and 'EXTERNAL TWO' in final_frame(s[-1]),'watch stopped after replacement'),mode='safety-auto')
+run('safety auto reload never discards dirty buffer',['X',{'replace':'EXTERNAL','wait':1.3}],lambda d,s:check(d['a']=='EXTERNAL' and buffer(d).startswith('XALPHA'),'auto reload lost edits'),mode='safety-auto')
+run('safety keep policy preserves clean buffer',[{'replace':'EXTERNAL','wait':1.3}],lambda d,s:check('ALPHA' in final_frame(s[-1]) and d['a']=='EXTERNAL','keep policy reloaded'),mode='safety-keep')
+run('safety dirty reload requires explicit confirmation',['X',{'disk':'EXTERNAL','wait':1.3},'\x0fu','r','y'],lambda d,s:check('Press y' in s[-2] and 'EXTERNAL' in final_frame(s[-1]) and 'content' not in d['session']['files'][0],'reload confirmation failed'),mode='safety')
+run('safety changed-again disk rejects old confirmation',['X',{'disk':'EXTERNAL','wait':1.3},'\x0fu','r',{'disk':'LATER','wait':0.2},'y'],lambda d,s:check(d['a']=='LATER' and buffer(d).startswith('XALPHA') and 'changed again' in s[-1],'stale reload discarded edits'),mode='safety')
+run('safety conflict copy preserves original and draft',['X',{'disk':'EXTERNAL','wait':1.3},'\x0fu','c'],lambda d,s:check(d['a']=='EXTERNAL' and any(name.startswith('a.copy-') and value.startswith('XALPHA') for name,value in d['saved'].items()),'copy did not preserve both'),mode='safety')
+run('safety original autosave is opt in',['X',{'wait_only':True,'wait':2.7}],lambda d,s:check(d['a'].startswith('XALPHA') and 'content' not in d['session']['files'][0],'auto save failed'),mode='safety-autosave')
+run('safety auto save pauses on external conflict',['X',{'replace':'EXTERNAL','wait':3}],lambda d,s:check(d['a']=='EXTERNAL' and buffer(d).startswith('XALPHA'),'auto save overwrote external file'),mode='safety-autosave')
+run('safety deleted original is never recreated',['X',{'delete':True,'wait':3},'\x13'],lambda d,s:check(d['a'] is None and buffer(d).startswith('XALPHA'),'deleted file was recreated'),mode='safety-autosave')
+run('safety duplicate canonical and hardlink aliases share one tab',[],lambda d,s:check(len(d['session']['files'])==1,'duplicate file tabs'),mode='safety-aliases')
+run('safety explore save cannot overwrite external changes',['X',{'disk':'EXTERNAL','wait':1.3},'\x0fE','/','b.md','\r','\x1b[B','\r','s'],lambda d,s:check(d['a']=='EXTERNAL' and buffer(d).startswith('XALPHA') and d['session']['files'][0]['path'].endswith('a.md'),'Explore save bypassed guard'),mode='safety')
+run('safety typing survives delayed autosave acknowledgement',['X',{'wait_only':True,'wait':2.15},'Y',{'wait_only':True,'wait':3}],lambda d,s:check(d['a'].startswith('XYALPHA') and 'content' not in d['session']['files'][0],'late save acknowledgement lost newer input'),mode='safety-slow-save')
+run('safety legacy recovery cannot overwrite disk',['\x13',{'wait_only':True,'wait':2.6}],lambda d,s:check(d['a'].startswith('ALPHA') and buffer(d)=='RECOVERED DRAFT','legacy recovery overwrote disk'),mode='safety-recovery')
+run('safety recovery survives unreadable original',['\x13','\x0fu','c'],lambda d,s:check(d['a'].startswith('\x00') and buffer(d)=='RECOVERED DRAFT' and any(name.startswith('a.copy-') and value=='RECOVERED DRAFT' for name,value in d['saved'].items()),'unreadable original prevented recovery copy'),mode='safety-recovery-unreadable')
 run('two-file View renders only selected document',['\x0fv','\x0fv','\x0f2'],lambda d,s:check('ALPHA' in final_frame(s[-2]) and 'BRAVO' not in final_frame(s[-2]) and 'BRAVO' in final_frame(s[-1]) and 'ALPHA' not in final_frame(s[-1]),'inactive document visible or selected document missing'),mode='two')
 run('selected document Split mouse tab switching',['\x1b[<0;12;2M'],lambda d,s:check('ALPHA' in final_frame(s[0]) and 'BRAVO' not in final_frame(s[0]) and 'BRAVO' in final_frame(s[-1]) and 'ALPHA' not in final_frame(s[-1]) and '[Split]' in final_frame(s[-1]),'Split did not show only selected document'),mode='two')
 run('selected document preserves unsaved buffers',['X','\x0f2','Y','\x0f1'],lambda d,s:check(buffer(d,0).startswith('XALPHA') and buffer(d,1).startswith('YBRAVO') and 'XALPHA' in final_frame(s[-1]) and 'YBRAVO' not in final_frame(s[-1]),'switch lost or mixed unsaved buffers'),mode='two')

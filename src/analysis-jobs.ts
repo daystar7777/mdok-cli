@@ -7,7 +7,9 @@ export function analysisJob<T>(data:Record<string,unknown>,options:JobOptions={}
   if(options.signal?.aborted)return Promise.reject(Error('Cancelled'));
   return new Promise((resolve,reject)=>{
     const entry=new URL(import.meta.url.endsWith('.ts')?'../dist/analysis-worker.js':'./analysis-worker.js',import.meta.url);
-    const worker=new Worker(entry,{workerData:data,execArgv:[],resourceLimits:{maxOldGenerationSizeMb:192}});
+    const env={...process.env};
+    if(data.kind==='preview'){delete env.NO_COLOR;delete env.NODE_DISABLE_COLORS;env.FORCE_COLOR=String(data.color??0);}
+    const worker=new Worker(entry,{workerData:data,execArgv:[],env,resourceLimits:{maxOldGenerationSizeMb:192}});
     let done=false;
     const finish=(error?:Error,value?:T)=>{if(done)return;done=true;clearTimeout(timer);options.signal?.removeEventListener('abort',abort);void worker.terminate();if(error)reject(error);else resolve(value!);};
     const abort=()=>finish(Error('Cancelled'));
@@ -20,3 +22,6 @@ export function analysisJob<T>(data:Record<string,unknown>,options:JobOptions={}
 export const analyzeAsync=(text:string,policy:DelimiterPolicy='both',profile:MarkdownProfile='gfm',options:JobOptions={})=>analysisJob<MathAnalysis>({kind:'math',text,policy,profile},options);
 export const compareAsync=(oldText:string,newText:string,profile:MarkdownProfile='gfm',options:JobOptions={})=>analysisJob<Comparison>({kind:'compare',old:oldText,new:newText,profile},options);
 export const convertAsync=(text:string,target:'dollar'|'bracket',selection?:Range,profile:MarkdownProfile='gfm',options:JobOptions={})=>analysisJob<ConversionPlan>({kind:'convert',text,target,selection,profile},options);
+export const previewAsync=(text:string,color:number,options:JobOptions={})=>Buffer.byteLength(text,'utf8')>1048576
+  ?Promise.reject<string>(Error('Preview exceeds 1 MiB'))
+  :analysisJob<string>({kind:'preview',text,color},options);

@@ -5,8 +5,20 @@ import {promisify} from 'node:util';
 import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {analyzeAsync,compareAsync} from './analysis-jobs.js';
+import {analyzeAsync,compareAsync,previewAsync} from './analysis-jobs.js';
 const exec=promisify(execFile);
+test('preview runs in a cancellable worker and preserves terminal color',async()=>{
+  const abort=new AbortController();
+  const pending=previewAsync('# Cancel\n'.repeat(50000),0,{signal:abort.signal});abort.abort();
+  await assert.rejects(pending,/Cancelled/);
+  const plain=await previewAsync('# Hello\n\n**World**',0);
+  assert.match(plain,/Hello/);assert.match(plain,/World/);assert.doesNotMatch(plain,/\u001b\[/);
+  assert.match(await previewAsync('# Hello\n\n**World**',1),/\u001b\[/);
+  let ticks=0;const timer=setInterval(()=>ticks++,5);
+  try{await previewAsync('A paragraph.\n\n'.repeat(10000),0);assert.ok(ticks>1);}
+  finally{clearInterval(timer);}
+  await assert.rejects(previewAsync('a'.repeat(1024*1024+1),0),/limit|large|MiB|exceed/i);
+});
 test('analysis worker cancellation and timeout reject without hanging',async()=>{
   const abort=new AbortController();
   const pending=analyzeAsync('$x$'.repeat(100000),'both','gfm',{signal:abort.signal});abort.abort();

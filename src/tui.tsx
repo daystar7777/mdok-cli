@@ -10,12 +10,13 @@ import {mathTokens,applyConversion,type MathEngine,type DelimiterPolicy,type Con
 import {comparisonLines,type Comparison} from './compare.js';
 import {gitSnapshots,decodeText} from './git-snapshots.js';
 import {linePosition,safeDisplay} from './document-analysis.js';
-import {compareAsync,convertAsync} from './analysis-jobs.js';
+import {compareAsync,convertAsync,previewAsync} from './analysis-jobs.js';
+import {inspectDisk,documentPath,contentToken,guardedWrite,saveConflictCopy,type DiskToken,type DiskSnapshot} from './file-safety.js';
 import { exportPandoc, openVsCode, PROFILES, FORMATS, type Profile } from "./integrations.js";
 import { Box, Text, useApp, useInput, useWindowSize, type Key } from "ink";
 import { readFile, readdir } from "node:fs/promises";
 import { writeFileAtomic } from "./atomic.js";
-import { watch, appendFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import { relative,dirname,resolve } from "node:path";
 import { lintMarkdown, formatMd, formatTable, diffLines, type LintProblem } from "./lint.js";
 import { BUILTIN_THEMES, loadThemes, themeByName, type TuiTheme } from "./theme.js";
@@ -26,7 +27,6 @@ import { gitStatus, gitRoot, gitSyncState, gitCommitAll, gitCommitFile, gitPullR
 import { exec } from "node:child_process";
 import { saveSession, saveSessionSync, type Session } from "./session.js";
 import { join } from "node:path";
-import { renderMarkdown } from "./render.js";
 import { createQrTransfer, qrTerminalRows, type QrTransfer } from "./qr.js";
 import { buildPrompt, chatCompletionStream } from "./llm.js";
 import {
@@ -39,7 +39,7 @@ import {
 
 type Focus = "editor" | "preview" | "side";
 type ViewMode = "split" | "source" | "preview";
-type OverlayKind = "explore" | "file" | "math" | "math-problems" | "compare-input" | "compare" | "pandoc" | "open" | "ask" | "find" | "run" | "lint" | "diff" | "sync" | "settings" | "help" | "qr";
+type OverlayKind = "disk" | "explore" | "file" | "math" | "math-problems" | "compare-input" | "compare" | "pandoc" | "open" | "ask" | "find" | "run" | "lint" | "diff" | "sync" | "settings" | "help" | "qr";
 
 interface BtnSpan {
   id: string;
@@ -116,6 +116,7 @@ interface TabSnap {
 }
 
 export interface InitialTab {
+  diskToken?: DiskToken;
   baseline?: string;
   path: string;
   content: string;
@@ -258,6 +259,13 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const safeTabs = initialTabs.length ? initialTabs : [{ path: "untitled-1.md", content: "" }];
   const startIdx = Math.min(Math.max(0, startActive), safeTabs.length - 1);
   const firstTab = safeTabs[startIdx];
+  const diskTokens=useRef(new Map(safeTabs.map(tab=>[tab.path,tab.diskToken??(tab.diskToken===null?null:contentToken(tab.baseline??tab.content))])));
+  const [diskNotice,setDiskNotice]=useState('');
+  const [autoPaused,setAutoPaused]=useState(false);
+  const [autoSaving,setAutoSaving]=useState(false);
+  const [externalPolicy,setExternalPolicy]=useState<'ask'|'auto'|'keep'>('ask');
+  const [autoSave,setAutoSave]=useState(false);
+  const [diskPrompt,setDiskPrompt]=useState<{path:string;source:string;disk:DiskSnapshot}|null>(null);
   const [tabs, setTabs] = useState<TabSnap[]>(() =>
     safeTabs.map((t) => {
       const cls = t.content.split("\n");
@@ -276,6 +284,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     }),
   );
   const [active, setActive] = useState(startIdx);
+  const tabsRef=useRef(tabs);tabsRef.current=tabs;
   const [lines, setLines] = useState<string[]>(() => firstTab.content.split("\n"));
   const [baseline, setBaseline] = useState(firstTab.baseline ?? firstTab.content);
   const [cursor, setCursor] = useState<Cursor>(tabs[startIdx].cursor);
@@ -474,13 +483,15 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   const innerW = Math.max(10, pairSrcW - 2 - gutterW);
   const edInnerH = Math.max(1, innerH - 1);
 
-  const pvLines = useMemo(
-    () =>
-      renderMarkdown(
-        answer ? `${t("ask.streamNote")}\n\n${answer}` : previewSrc,
-      ).split("\n"),
-    [answer, previewSrc],
-  );
+  const [pvLines,setPvLines]=useState<string[]>([]);
+  const [previewPending,setPreviewPending]=useState(true);
+  useEffect(()=>{
+    const abort=new AbortController();setPreviewPending(true);
+    const timer=setTimeout(()=>void previewAsync(answer?`${t('ask.streamNote')}\n\n${answer}`:previewSrc,chalk.level,{signal:abort.signal,timeout:10000})
+      .then(text=>{if(!abort.signal.aborted){setPvLines(text.split('\n'));setPreviewPending(false);}})
+      .catch(e=>{if(!abort.signal.aborted){setPreviewPending(false);setMsg(String(e));}}),0);
+    return()=>{clearTimeout(timer);abort.abort();};
+  },[answer,previewSrc,lang,curFile]);
   const maxPvTop = Math.max(0, pvLines.length - innerH);
 
   // Sidebar entries: recent files first, then cwd markdown files
@@ -576,24 +587,29 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   };
 
   // ---- File / overlay actions (keyboard and mouse share these) ----
-  const saveNow = () => {
-    const content = lines.join("\n");
-    const target = curFile;
+  const saveDocument = (target:string,content:string) => {
     const pending = (saveQueue.current.get(target) ?? Promise.resolve())
-      .catch(() => {}).then(() => writeFileAtomic(target, content));
+      .catch(() => {}).then(async()=>{
+        const token=await guardedWrite(target,content,diskTokens.current.get(target)??null);
+        diskTokens.current.set(target,token);
+        setTabs(ts=>ts.map(tab=>tab.path===target?{...tab,baseline:content}:tab));
+        if(currentFileRef.current===target){baselineRef.current=content;setBaseline(content);setDiskNotice('');setAutoPaused(false);}
+      });
     saveQueue.current.set(target, pending);
-    pending
+    void pending.finally(()=>{if(saveQueue.current.get(target)===pending)saveQueue.current.delete(target);}).catch(()=>{});
+    return pending;
+  };
+  const saveNow = () => {
+    const content=lines.join('\n'),target=curFile;
+    saveDocument(target,content)
       .then(() => {
-        setTabs(ts => ts.map(tab => tab.path === target ? { ...tab, baseline: content } : tab));
-        if (currentFileRef.current === target) setBaseline(content);
         setMsg(t("msg.saved", { f: target }));
         setQuitArmed(false);
         void refreshSideFiles();
         scheduleGitCommit(target, gitRootPath, gitSyncOn);
         void refreshGit();
       })
-      .catch((err: Error) => setMsg(t("msg.saveFailed", { e: err.message })))
-      .finally(() => { if (saveQueue.current.get(target) === pending) saveQueue.current.delete(target); });
+      .catch((err: Error) => {setMsg(t('msg.saveFailed',{e:err.message}));if(currentFileRef.current===target){setDiskNotice(t('disk.paused'));setAutoPaused(true);}});
   };
   const anyDirty = (): boolean =>
     lines.join("\n") !== baseline ||
@@ -605,20 +621,21 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
             path: curFile,
             cursor,
             ...(lines.join("\n") !== baseline
-              ? { content: lines.join("\n") }
+              ? { content: lines.join("\n"),diskToken:diskTokens.current.get(curFile)??null }
               : {}),
           }
         : {
             path: t.path,
             cursor: t.cursor,
             ...(t.lines.join("\n") !== t.baseline
-              ? { content: t.lines.join("\n") }
+              ? { content: t.lines.join("\n"),diskToken:diskTokens.current.get(t.path)??null }
               : {}),
           },
     ),
     active,
   });
   const quitNow = () => {
+    if(saveQueue.current.size){setMsg(t('disk.saving'));return;}
     if (anyDirty() && !quitArmed) {
       setQuitArmed(true);
       setMsg(t("msg.quitConfirm"));
@@ -639,6 +656,9 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     answer,
   });
   const restoreTab = (t: TabSnap) => {
+    if(currentFileRef.current!==t.path){setPvLines([]);setPreviewPending(true);}
+    currentFileRef.current=t.path;linesRef.current=t.lines;baselineRef.current=t.baseline;
+    setDiskNotice('');setAutoPaused(false);setDiskPrompt(null);
     lastPush.current = null;
     setCurFile(t.path);
     setLines(t.lines);
@@ -665,14 +685,15 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       void saveConfig({ recent: pruned }).catch(() => {});
     }
   };
-  const openTab = (path: string, content: string, note?: string) => {
-    const at = tabs.findIndex((t) => t.path === path);
+  const openTab = (path: string, content: string, note?: string,token:DiskToken=contentToken(content)) => {
+    const at = tabsRef.current.findIndex((t) => t.path === path);
     if (at >= 0) {
       switchTab(at);
       setOverlay(null);
       return;
     }
     const snap = snapshotTab();
+    diskTokens.current.set(path,token);
     const fresh: TabSnap = {
       path,
       lines: content.split("\n"),
@@ -684,22 +705,23 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       pvTop: 0,
       answer: null,
     };
-    setTabs((ts) => [...ts.map((t, i) => (i === active ? snap : t)), fresh]);
-    setActive(tabs.length);
+    const next=[...tabsRef.current.map((t,i)=>i===active?snap:t),fresh];
+    tabsRef.current=next;setTabs(next);setActive(next.length-1);
     restoreTab(fresh);
     setOverlay(null);
     setMsg(note ?? t("msg.opened", { f: path }));
     pushRecent(path);
   };
   const switchTab = (i: number) => {
-    if (i === active || i < 0 || i >= tabs.length) return;
+    if (i === active || i < 0 || i >= tabsRef.current.length) return;
     const snap = snapshotTab();
     setTabs((ts) => ts.map((t, xi) => (xi === active ? snap : t)));
     setActive(i);
-    restoreTab(tabs[i]);
+    restoreTab(tabsRef.current[i]);
     setOverlay(null);
   };
   const closeTabAt = (i: number) => {
+    if(saveQueue.current.size){setMsg(t('disk.saving'));return;}
     if (tabs.length <= 1) {
       setMsg(t("msg.lastTab"));
       return;
@@ -731,9 +753,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     // Validate/read before changing any editor state. Failed opens keep the buffer.
     let loaded=create?null:await readExplorerFile(path);
     if(decision==='save'){
-      await (saveQueue.current.get(originalPath)??Promise.resolve());
-      await writeFileAtomic(originalPath,originalContent);
-      setBaseline(originalContent);
+      await saveDocument(originalPath,originalContent);
       // Re-read after saving, including aliases/Unicode-normalized paths that
       // refer to the same file but are not string-equal to the editor path.
       if(loaded)loaded=await readExplorerFile(path);
@@ -744,6 +764,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     const content=loaded?.content??'';
     const other=tabs.findIndex((tab,i)=>i!==active&&resolve(tab.path)===target);
     const fresh:TabSnap=other>=0?tabs[other]:{path:target,lines:content.split('\n'),baseline:content,cursor:{r:0,c:0},sel:null,edTop:0,edLeft:0,pvTop:0,answer:null};
+    if(other<0)diskTokens.current.set(target,contentToken(content));
     setTabs(tabs.map((tab,i)=>i===active?fresh:tab).filter((_,i)=>i!==other));
     setActive(other>=0&&other<active?active-1:active);restoreTab(fresh);
     setViewMode(create?'split':'preview');setFocus(create?'editor':'preview');setVimInsert(true);
@@ -752,16 +773,24 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   };
   const switchToFile = async (path: string) => {
     try {
-      openTab(path, await readFile(path, "utf-8"));
+      const canonical=await documentPath(path),disk=await inspectDisk(canonical);
+      if(disk.content===null)throw Error('File not found');
+      for(let i=0;i<tabsRef.current.length;i++){
+        const other=await inspectDisk(tabsRef.current[i].path).catch(()=>null);
+        if(tabsRef.current[i].path===canonical||other?.identity===disk.identity){switchTab(i);setOverlay(null);return;}
+      }
+      openTab(canonical,disk.content,undefined,disk.token);
     } catch (err) {
       setMsg(t("msg.openFailed", { e: (err as Error).message }));
       pruneRecent(path);
     }
   };
   const newFile = () => {
-    const p = join(process.cwd(), `untitled-${untitledN}.md`);
-    setUntitledN((n) => n + 1);
-    openTab(p, "", t("msg.newFile", { f: p }));
+    void (async()=>{
+      let n=untitledN,path:string;
+      do{path=await documentPath(join(process.cwd(),`untitled-${n++}.md`));}while(tabs.some(tab=>tab.path===path)||(await inspectDisk(path)).token!=='missing');
+      setUntitledN(n);openTab(path,'',t('msg.newFile',{f:path}),'missing');
+    })().catch(e=>setMsg(String(e)));
   };
   const openOverlayKind = async (kind: OverlayKind) => {
     if (kind === "qr") {
@@ -964,6 +993,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       setVimInsert(true);
       const gsync = cfg.gitSync !== false;
       setGitSyncOn(gsync);
+      setExternalPolicy(cfg.externalChanges);setAutoSave(cfg.autoSave);
       void refreshGit(gsync);
       if (Array.isArray(cfg.recent)) {
         setRecent(
@@ -1344,6 +1374,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
           .catch((e: Error) => setMsg(t('msg.exportFailed', { e: e.message })));
       }
       else if (idx === 8) void openOverlayKind('pandoc');
+      else if (idx === 9) {setDiskPrompt(null);void openOverlayKind('disk');}
     } else if (overlay === "open") {
       const name = openFiles[idx];
       if (name) void switchToFile(join(process.cwd(), name));
@@ -1385,7 +1416,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
   };
 
   const setFieldKeys = ["baseURL", "model", "apiKey"] as const;
-  const SET_ROWS = 8; // 3 text + theme + git + lang + lines + vim rows
+  const SET_ROWS = 10;
   const handleSettingsKey = (ch: string, k: Key) => {
     if (setEditing) {
       editMini((v) => setSetEditing(v), setEditing, ch, k, () => {
@@ -1402,6 +1433,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     if (k.upArrow) setSetIdx((i) => (i + SET_ROWS - 1) % SET_ROWS);
     else if (k.downArrow || k.tab) setSetIdx((i) => (i + 1) % SET_ROWS);
     else if (k.return) {
+      if(setIdx===8){const modes=['ask','auto','keep'] as const;const next=modes[(modes.indexOf(externalPolicy)+1)%3];setExternalPolicy(next);void saveConfig({externalChanges:next}).catch(e=>setMsg(String(e)));return;}
+      if(setIdx===9){const next=!autoSave;setAutoSave(next);setAutoPaused(false);void saveConfig({autoSave:next}).catch(e=>setMsg(String(e)));return;}
       if (setIdx === 3) {
         cycleTheme(); // theme row: Enter cycles, stays open
         return;
@@ -1465,42 +1498,54 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       setCompareTop(0);setCompareRaw(false);setCompareQuery(null);setOverlay('compare');
     }catch(e){if(id===compareRun.current)setMsg((e as Error).message);}
   };
-  const lastExtChange = useRef(0);
-  useEffect(() => {
-    let w: { close: () => void } | null = null;
-    let dead = false;
-    try {
-      w = watch(curFile, async () => {
-        const now = Date.now();
-        if (now - lastExtChange.current < 500) return;
-        lastExtChange.current = now;
-        try {
-          const disk = await readFile(curFile, "utf-8");
-          if (dead || currentFileRef.current !== curFile) return;
-          if (disk === linesRef.current.join("\n")) return; // our own save
-          if (linesRef.current.join("\n") === baselineRef.current) {
-            setLines(disk.split("\n"));
-            setBaseline(disk);
-            setMsg(t("msg.reloaded"));
-          } else {
-            setMsg(t("msg.diskChanged"));
-          }
-        } catch {
-          // deleted mid-watch etc.
-        }
-      });
-    } catch {
-      // untitled / missing file
-    }
-    return () => {
-      dead = true;
-      try {
-        w?.close();
-      } catch {
-        // already closed
-      }
+  const adoptDisk=(disk:DiskSnapshot)=>{
+    if(disk.content===null)return;
+    const next=disk.content.split('\n');
+    diskTokens.current.set(disk.path,disk.token);baselineRef.current=disk.content;linesRef.current=next;
+    setLines(next);setBaseline(disk.content);setPreviewSrc(disk.content);setSel(null);
+    setCursor(c=>{const r=Math.min(c.r,next.length-1);return {r,c:Math.min(c.c,next[r].length)};});
+    undoStacks.current.delete(disk.path);lastPush.current=null;
+    setTabs(ts=>ts.map(tab=>tab.path===disk.path?{...tab,lines:next,baseline:disk.content!}:tab));
+    setDiskNotice('');setAutoPaused(false);setDiskPrompt(null);setMsg(t('msg.reloaded'));
+  };
+  const reloadDisk=async(confirm=false)=>{
+    const path=curFile,source=linesRef.current.join('\n');
+    try{
+      if(saveQueue.current.has(path))throw Error(t('disk.saving'));
+      const disk=await inspectDisk(path);
+      if(currentFileRef.current!==path||linesRef.current.join('\n')!==source)throw Error(t('disk.retry'));
+      if(disk.content===null)throw Error(t('disk.missing'));
+      if(confirm){
+        if(!diskPrompt||diskPrompt.path!==path||diskPrompt.source!==source||diskPrompt.disk.token!==disk.token){setDiskPrompt(null);throw Error(t('disk.retry'));}
+      }else if(source!==baselineRef.current){setDiskPrompt({path,source,disk});return;}
+      adoptDisk(disk);setOverlay(null);
+    }catch(e){setDiskPrompt(null);setMsg(String(e));}
+  };
+  useEffect(()=>{
+    let dead=false,busy=false;
+    const check=async()=>{
+      if(busy||saveQueue.current.has(curFile))return;busy=true;
+      try{
+        const disk=await inspectDisk(curFile);
+        if(dead||currentFileRef.current!==curFile||saveQueue.current.has(curFile))return;
+        if(disk.token===diskTokens.current.get(curFile)){setDiskNotice('');return;}
+        if(externalPolicy==='auto'&&linesRef.current.join('\n')===baselineRef.current&&disk.content!==null&&!diskPrompt){adoptDisk(disk);return;}
+        setDiskNotice(t(disk.content===null?'disk.missing':'disk.changed'));setAutoPaused(true);
+      }catch{if(!dead){setDiskNotice(t('disk.unreadable'));setAutoPaused(true);}}
+      finally{busy=false;}
     };
-  }, [curFile]);
+    void check();const timer=setInterval(()=>void check(),1000);
+    return()=>{dead=true;clearInterval(timer);};
+  },[curFile,externalPolicy,lang,diskPrompt]);
+  useEffect(()=>{
+    if(!autoSave||autoPaused||!dirty||overlay||saveQueue.current.has(curFile)||diskTokens.current.get(curFile)==='missing'||diskTokens.current.get(curFile)==null)return;
+    const path=curFile,content=lines.join('\n');
+    const timer=setTimeout(()=>{
+      setAutoSaving(true);
+      void saveDocument(path,content).catch(e=>{if(currentFileRef.current===path){setAutoPaused(true);setDiskNotice(t('disk.paused'));setMsg(String(e));}}).finally(()=>setAutoSaving(false));
+    },2000);
+    return()=>clearTimeout(timer);
+  },[lines,curFile,dirty,autoSave,autoPaused,autoSaving,overlay]);
 
   // Persist workspace (debounced; quit saves synchronously)
   useEffect(() => {
@@ -1856,6 +1901,17 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         setOverlay(null);
         return;
       }
+      if(overlay==='disk'){
+        if(input==='r')void reloadDisk();
+        else if(input==='y'&&diskPrompt)void reloadDisk(true);
+        else if(input==='k'){setDiskPrompt(null);setOverlay(null);}
+        else if(input==='d'){setDiskPrompt(null);setCompareEdit({value:':disk',cur:5});setOverlay('compare-input');}
+        else if(input==='c'){
+          const path=curFile,content=lines.join('\n');
+          void saveConflictCopy(path,content).then(copy=>{setMsg(t('disk.copySaved',{f:copy}));setOverlay(null);}).catch(e=>setMsg(String(e)));
+        }else if(input==='a'){setAutoPaused(false);setOverlay(null);}
+        return;
+      }
       if(overlay==='compare-input'){editMini(setCompareEdit,compareEdit,input,key,()=>void submitComparison());return;}
       if(overlay==='compare'&&comparison){
         const height=Math.max(1,rowsSafe-10-(tabsVisible?1:0)-(compareQuery?1:0)),max=Math.max(0,compareRows.length-height);
@@ -1895,7 +1951,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         return;
       }
       if (overlay === "file" || overlay === 'pandoc' || overlay === 'math') {
-        const count = overlay === 'file' ? 9 : overlay==='math'?7:6;
+        const count = overlay === 'file' ? 10 : overlay==='math'?7:6;
         if (key.upArrow) setMenuIdx((i) => (i + count - 1) % count);
         else if (key.downArrow) setMenuIdx((i) => (i + 1) % count);
         else if (key.return) activateMenuIndex(menuIdx);
@@ -2033,6 +2089,8 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         setQuitArmed(false);
       } else if (input === "f") {
         void openOverlayKind("file");
+      } else if(input==='u'){
+        setDiskPrompt(null);void openOverlayKind('disk');
       } else if(input==='E'){
         void openOverlayKind('explore');
       } else if(input==='M'){
@@ -2473,7 +2531,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       return centerBox('Pandoc', items.map((label, i) => <Text key={i} inverse={i === menuIdx}>{i === menuIdx ? '>' : ' '} {i + 1} {label}</Text>), t('integration.trusted'), items.length);
     }
     if (overlay === "file") {
-      const items = [t("menu.save"), t("menu.new"), t("menu.open"), t("menu.run"), t("menu.export"), t("menu.closeTab"), t("menu.qr"), t('integration.vscode'), t('integration.pandoc')];
+      const items = [t("menu.save"), t("menu.new"), t("menu.open"), t("menu.run"), t("menu.export"), t("menu.closeTab"), t("menu.qr"), t('integration.vscode'), t('integration.pandoc'),t('disk.title')];
       return centerBox(
         t("btn.file"),
         items.map((t, i) => (
@@ -2595,9 +2653,16 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         <Text key="vim" wrap="truncate">
           {setIdx === 7 ? ">" : " "} {t("set.vimRow")} {vimOn ? t("set.on") : t("set.off")} {t("set.vimToggle")}
         </Text>,
+        <Text key="external" wrap="truncate">{setIdx===8?'>':' '} {t('disk.policy')}: {t(`disk.${externalPolicy}`)} (Enter)</Text>,
+        <Text key="autosave" wrap="truncate">{setIdx===9?'>':' '} {t('disk.autoSave')}: {t(autoSave?'set.on':'set.off')} (Enter)</Text>,
       );
       return centerBox(t("set.title"), rows, t("set.hint"), undefined, 76);
     }
+    if(overlay==='disk')return centerBox(t('disk.title'),[
+      <Text key="note" wrap="wrap">{diskNotice||t('disk.description')}</Text>,
+      <Text key="auto">{t('disk.autoSave')}: {t(autoSave?'set.on':'set.off')} {autoPaused?t('disk.paused'):''}</Text>,
+      <Text key="confirm" bold>{diskPrompt?t('disk.confirm'):t('disk.actions')}</Text>,
+    ],t('disk.actions'),undefined,Math.min(90,cols-4));
     // help
     return centerBox(
       t("help.title"),
@@ -2750,7 +2815,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
     <Box flexDirection="column" width={w} borderStyle="single" borderColor={focus === "preview" ? theme.focus : undefined}>
       {pvVisible.map((ln, i) => (
         <Text key={i} wrap="truncate">
-          {ln || " "}
+          {i===0&&previewPending&&!pvLines.length?t('disk.reading'):ln || " "}
         </Text>
       ))}
     </Box>
@@ -2834,7 +2899,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
       ) : null}
       <Box height={1} flexShrink={0}>
         <Text wrap="truncate">
-        {menuSel ? (
+        {diskNotice&&!overlay ? <Text color="yellow">{diskNotice} · {t('disk.shortcut')}</Text> : menuSel ? (
           <Text bold wrap="truncate">{t("hint.menu")}</Text>
         ) : leader ? (
           <Text bold wrap="truncate">{t("hint.leader")}</Text>
@@ -2847,7 +2912,7 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
         ) : (
           <Text dimColor wrap="truncate">{t(viewMode === "preview" ? "hint.viewer" : "hint.default")} · {stats.words}w{vimOn ? (vimInsert ? ` · ${t("status.insert")}` : ` · ${t("status.normal")}`) : ""}{gitSt ? ` · git:${gitSt.branch}${gitSt.ahead ? `⇡${gitSt.ahead}` : ""}${gitSt.behind ? `⇣${gitSt.behind}` : ""}${gitSt.conflict ? " !conflict" : ""}` : ""}{asking ? t("hint.asking") : ""}</Text>
         )}
-        {!overlay && !term ? <Text dimColor wrap="truncate"> · {mathPending?t('math.pending'):`${mathCurrent?.engine??mathEngine} E${mathCurrent?.diagnostics.filter(d=>d.severity==='error').length??0} W${mathCurrent?.diagnostics.filter(d=>d.severity==='warning').length??0} ?${mathCurrent?.diagnostics.filter(d=>d.severity==='info').length??0}`}</Text>:null}
+        {!overlay && !term ? <Text dimColor wrap="truncate"> · {previewPending?t('disk.reading'):autoSaving?t('disk.saving'):autoPaused?t('disk.paused'):mathPending?t('math.pending'):`${mathCurrent?.engine??mathEngine} E${mathCurrent?.diagnostics.filter(d=>d.severity==='error').length??0} W${mathCurrent?.diagnostics.filter(d=>d.severity==='warning').length??0} ?${mathCurrent?.diagnostics.filter(d=>d.severity==='info').length??0}`}</Text>:null}
         {msg ? <Text> — {msg}</Text> : null}
         </Text>
       </Box>
@@ -2856,12 +2921,23 @@ function TuiApp({ initialTabs, startActive }: { initialTabs: InitialTab[]; start
 }
 
 export async function runTui(initialTabs: InitialTab[], startActive: number): Promise<void> {
+  const normalized:InitialTab[]=[],identities=new Set<string>();
+  let active=0;
+  for(const [index,tab] of initialTabs.entries()){
+    // A recovered buffer must remain accessible even if its original became unreadable.
+    const path=await documentPath(tab.path).catch(()=>resolve(tab.path)),disk=await inspectDisk(path).catch(()=>null);
+    const identity=disk?.identity??path;
+    if(identities.has(identity))continue;
+    identities.add(identity);
+    if(index===startActive)active=normalized.length;
+    normalized.push({...tab,path,diskToken:tab.diskToken!==undefined?tab.diskToken:!disk?null:disk.content===null?'missing':contentToken(tab.baseline??tab.content)});
+  }
   // Attach the mouse bus BEFORE Ink sets up its stdin parser so mouse bytes
   // are stamped/handled first and never surface as typed characters.
   if (process.stdin.isTTY) ensureMouseListener();
   const { render } = await import("ink");
   // Alternate screen: layout fills the screen so mouse coords map 1:1
-  const { waitUntilExit } = render(<TuiApp initialTabs={initialTabs} startActive={startActive} />, {
+  const { waitUntilExit } = render(<TuiApp initialTabs={normalized} startActive={active} />, {
     alternateScreen: true,
   });
   await waitUntilExit();
