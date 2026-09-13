@@ -101,6 +101,11 @@ def final_frame(s):
     return re.split(r'(?=\[>\] mdok)',s)[-1]
 
 run('single-file view cycle',['\x0fv','\x0fv','\x0fv'],lambda d,s: check('[View]' in s[2] and 'ALPHA' in s[2] and '[Split]' in s[3],'body missing on mode transition'))
+run('desktop absent hides button',[],lambda d,s:check('[Desktop]' not in ''.join(s) and '[App]' not in ''.join(s),'desktop shown without app'),start_edit=False)
+if sys.platform=='darwin':
+    run('desktop installed shows button',[],lambda d,s:check('[Desktop]' in ''.join(s),'desktop button missing'),mode='desktop')
+    run('desktop narrow shows App',[],lambda d,s:check('[App]' in ''.join(s),'compact app button missing'),mode='desktop',width=60)
+    run('desktop dirty refuses opening',['X',{'click':'[Desktop]','wait':0.5}],lambda d,s:check('Save changes first' in ''.join(s),'dirty file not guarded'),mode='desktop')
 run('two-file View renders only selected document',['\x0fv','\x0fv','\x0f2'],lambda d,s:check('ALPHA' in final_frame(s[-2]) and 'BRAVO' not in final_frame(s[-2]) and 'BRAVO' in final_frame(s[-1]) and 'ALPHA' not in final_frame(s[-1]),'inactive document visible or selected document missing'),mode='two')
 run('selected document Split mouse tab switching',['\x1b[<0;12;2M'],lambda d,s:check('ALPHA' in final_frame(s[0]) and 'BRAVO' not in final_frame(s[0]) and 'BRAVO' in final_frame(s[-1]) and 'ALPHA' not in final_frame(s[-1]) and '[Split]' in final_frame(s[-1]),'Split did not show only selected document'),mode='two')
 run('selected document preserves unsaved buffers',['X','\x0f2','Y','\x0f1'],lambda d,s:check(buffer(d,0).startswith('XALPHA') and buffer(d,1).startswith('YBRAVO') and 'XALPHA' in final_frame(s[-1]) and 'YBRAVO' not in final_frame(s[-1]),'switch lost or mixed unsaved buffers'),mode='two')
