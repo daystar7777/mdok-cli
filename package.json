@@ -1,6 +1,6 @@
 {
   "name": "@daystar7777/mdok",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Markdown OK — pretty CLI viewer + LLM analysis for .md files (BYOK)",
   "type": "module",
   "bin": {

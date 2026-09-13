@@ -93,7 +93,7 @@ program.configureHelp({
 program
   .name("mdok")
   .description(ct("cli.description"))
-  .version("0.1.11", "-V, --version", ct("cli.versionHelp"));
+  .version("0.1.12", "-V, --version", ct("cli.versionHelp"));
 
 program
   .command("view")
